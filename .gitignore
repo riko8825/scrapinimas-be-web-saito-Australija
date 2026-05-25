@@ -1,0 +1,21 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+abr-data/*.xml
+abr-data/*.zip
+output/
+logs/
+
+# Dashboard SQLite (operator-local state)
+dashboard/outreach.db
+dashboard/outreach.db-wal
+dashboard/outreach.db-shm
+
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

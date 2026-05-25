@@ -1,0 +1,15 @@
+# Dashboard-only dependencies. Atskirai nuo requirements.txt, kad
+# pipeline (XML parsing, DNS) liktų lean.
+#
+# Install:
+#   pip install -r requirements-dashboard.txt
+#
+# Run:
+#   streamlit run dashboard/app.py
+# arba: double-click start-dashboard.bat
+
+streamlit>=1.32,<2
+pandas>=2.0,<3
+altair>=5.2,<6
+
+# SQLite — Python standard library, papildomų paketų nereikia
