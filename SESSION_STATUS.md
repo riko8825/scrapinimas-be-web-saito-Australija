@@ -1,6 +1,55 @@
 # SESSION_STATUS
 
-## Paskutinė sesija: 2026-05-25 (sesija #6 — Plan A: enrich_abr.py sukurta + ABR Lookup JSONP integracija + memory init + Brave key leak fix)
+## Paskutinė sesija: 2026-05-25 (sesija #6 — Plan A→B pivot mid-session: enrich_abr.py ištrintas, perėjom į Google Places API; code laukia dashboard/ push'o)
+
+### Ką padarėme (sesijos #6 antra pusė)
+
+**Plan A → Plan B pivot:**
+- Vartotojas pasakė: "be jokio brave. jo prenumerata jau atsaukta" + "Pereinam tiesiai į Plan B (Google Places)" — strateginis sprendimas eliminate ABR Lookup viduriniąjį žingsnį
+- enrich_abr.py ištrintas (Plan A code'as nebenaudojamas)
+- `.env.example` ABR_* config (`ABR_GUID`, `ABR_ENDPOINT`, `ABR_CONCURRENCY`, `ABR_TIMEOUT`, `ABR_ENRICHED_CSV`) pakeistas į PLACES_* config (`GOOGLE_PLACES_API_KEY`, `PLACES_ENDPOINT`, `PLACES_CONCURRENCY`, `PLACES_TIMEOUT`, `PLACES_REGION`, `PLACES_LIMIT`, `PLACES_DRY_RUN`)
+
+**Google Places API research:**
+- Endpoint patvirtinta: `POST https://places.googleapis.com/v1/places:searchText` (Places API New v1)
+- Headers: `X-Goog-Api-Key`, `X-Goog-FieldMask: places.id,places.displayName,places.formattedAddress,places.websiteUri,places.internationalPhoneNumber,places.types`
+- Body: `{"textQuery": "<name> <postcode>", "regionCode": "AU"}`
+- **Pricing — Text Search Enterprise SKU (websiteUri + phone Enterprise field'ai):**
+  - $35/1000 calls (0-100k tier)
+  - **1k free monthly quota** — smoke test 1000 leads = $0 jei tilps į vieno mėnesio quota
+  - 100k mass run ≈ $3,465 (vs sesijos #5 estimate $4,700 — 25% pigiau, nes vienas Text Search call'as atstoja 2-step Text Search + Place Details)
+- Rate limits: 600 QPM default → mūsų `PLACES_CONCURRENCY=10` ≈ 600 RPM steady state ✅
+
+**Blockers atskleisti:**
+- `dashboard/` direktorija (su `db.py`, `importer.py`, `app.py`, `i18n.py`, `queries.py`, `outreach.db`) **neegzistuoja šitam git repo'e** — sesijos #4 dashboard kodas niekada nebuvo committed į origin/main. enrich_places.py architektūra reikalauja `leads` lentelės schemos žinojimo prieš SELECT/UPDATE pattern'ą — code'as laukia, kol vartotojas push'ins `dashboard/`.
+
+**Memory updates:**
+- `places_api.md` — naujas reference memory (endpoint, headers, field mask, pricing, rate limits)
+- `abr_lookup_api.md` — pažymėtas SUPERSEDED (paliekamas archyvui)
+- `MEMORY.md` indeksas atnaujintas
+
+**Architektūros sprendimai (DECISION_LOG):**
+- Naujas įrašas "Plan A → Plan B pivot": single-source-of-truth value (vienas call = trading_name + phone + website + place_id), GUID friction eliminate, cost model 25% pigiau, AU SMB coverage hipotezė ≥60%
+- Senas įrašas "Plan A start: enrich_abr.py" pažymėtas [SUPERSEDED] header'iu
+
+### Ką padarėme (sesijos #6 pirma pusė, archyvas)
+
+**Memory init:**
+- Sukurta visa memory infrastruktūra `~/.claude/projects/c--Users-pinig-scrapinimas-be-web-saito-Australija/memory/`:
+  - `MEMORY.md` indeksas (dabar 7 pointer'iai)
+  - `user_role.md` — Empirra founder profile + komunikacijos preferencijos
+  - `project_state.md` — pipeline state per sesijos #6 start, blockers, Plan A→B→C strategija
+  - `find_social_brave_ceiling.md` — 5% recall ceiling rationale
+  - `feedback_clickable_links.md` — markdown links taisyklė
+  - `run_py_dns_contract.md` — stage_dns tuple-unpack pattern
+  - `abr_lookup_api.md` — JSONP endpoint specs (dabar SUPERSEDED)
+
+**Brave key leak fix:**
+- Aptikta sesijos #6 start: `.env.example` faile committed realus `BRAVE_API_KEY=BSAh5c6r_...` value. Vartotojas paskelbė: prenumerata atšaukta, key dead. `.env.example` pakeistas į `BRAVE_API_KEY=your_key_here`. Senas key vis dar git history, bet useless.
+
+**Plan A — enrich_abr.py (SUPERSEDED tos pačios sesijos antroje pusėje):**
+- enrich_abr.py sukurtas + push'inta (commit f2a8145), tada ištrintas Plan B pivot metu
+- Sanity tests buvo 3/3 PASS (JSONP unwrap + name picker + error envelope)
+- Code'as deleted, bet DECISION_LOG įrašas + memory `abr_lookup_api.md` palikti referensui
 
 ### Ką padarėme
 
@@ -31,33 +80,39 @@
 
 ### Kas liko / nepatvirtinta
 
-- **Live smoke test su realiu GUID atidėtas** — laukia, kol vartotojas užregistruos ABR GUID per https://abr.business.gov.au/Tools/WebServicesAgreement (~5 min form + email).
-- **Brave key revoke nepadarytas** — vartotojas turi rankiniu revoke'inti `BSAh5c6r_QHMkvH-K4zo2EcvjldXgF2` per https://api.search.brave.com/app/keys ir įdėti naują į `.env`. Senas key vis dar git history (pakeitimas ne purge, o overwrite).
-- **find_social.py nepritaikytas trading_name'ui** — kai enrichment baigsis, reikės modifikuoti find_social.py, kad query string'e naudotų `trading_name` (jei populated), fallback `business_name`.
-- **DNS no_website.csv neegzistuoja šitam clone'ui** — `output/` direktorija tuščia. Kad smoke testas veiks, reikės arba paleisti DNS stage'ą iš naujo, arba copy'inti `no_website.csv` iš ankstesnio environment'o.
+- **`dashboard/` neegzistuoja git repo'e** — sesijos #4 kodas niekada nebuvo committed. enrich_places.py architektūra reikalauja `dashboard/db.py` schemos žinojimo (leads table columns) prieš SELECT/UPDATE pattern'ą. Vartotojas TURI push'inti `dashboard/` folderį prieš sesiją #7.
+- **enrich_places.py kodas neegzistuoja** — laukia dashboard/ push'o. Research baigtas, .env config paruoštas, DECISION_LOG + memory atnaujinti. Tik code generation likę.
+- **GCP project + Places API key + billing alert nesetup'inti** — vartotojas atliks paraleliai sesijoje #7 (instant setup, jokio email lūkesčio).
+- **find_social.py nepritaikytas Places duomenims** — po Places enrichment'o reikės modifikuoti find_social.py, kad naudotų `displayName.text` arba fallback `business_name` query string'e (jei vis tiek norėsim social discovery layer'į papildomam coverage'ui).
+- **DNS no_website.csv neegzistuoja šitam clone'ui** — `output/` direktorija tuščia. Bet Places enrichment'as veiks ant outreach.db `leads` table, ne CSV — tai blocker'is dingsta.
 - **Importer.py bug** (carry-over #5) — `--csv has_social.csv` perrašo business_name. Workaround dokumentuotas, fix odojamas.
 - **Dashboard UI loop nepatvirtintas** (carry-over iš sesijos #4).
 
 ### Kitas žingsnis
 
-**SESIJA #7 (kai GUID gautas):**
-1. Vartotojas užregistruoja ABR GUID (~5 min) ir įdeda į `.env` `ABR_GUID=<gautas-guid>`
-2. Verify: `py -3 enrich_abr.py --limit 1` ant test ABN — pažiūrim, ar gauname `trading_name` populated
-3. Smoke test: `py -3 enrich_abr.py --limit 100` ant `no_website.csv` — patvirtinam ABR endpoint stable + matuojam `trading_name` populated rate (target ≥60% AU SMB)
-4. Jei smoke OK — full run: `py -3 enrich_abr.py` ant 97k ABNs (~3.4h ETA su default conc=5)
-5. Modify `find_social.py` — naudoti `trading_name` (jei populated) query string'e, fallback `business_name`
-6. Re-run `find_social.py --limit 20` su `trading_name` — palyginti hit-rate vs sesijos #5 V2 baseline (target: 5% → ≥15%)
+**SESIJA #7 (kai dashboard/ push'inta):**
+1. Vartotojas push'ina `dashboard/` folderį (db.py, importer.py, app.py, i18n.py, queries.py) į origin/main. Optional: outreach.db schema dump'as arba sample DB.
+2. Vartotojas paraleliai: GCP Console → New project → Enable "Places API (New)" → Credentials → API key → Restrict to Places API + IP allowlist + $50 monthly billing alert
+3. Vartotojas įdeda `GOOGLE_PLACES_API_KEY=<key>` į `.env`
+4. Claude inspect'ina `dashboard/db.py` `leads` table schemą — pasitvirtina, kurie stulpeliai egzistuoja (trading_name, phone, website_url, place_id) arba ar reikia ALTER TABLE migration
+5. Claude sukuria `enrich_places.py` — async httpx + SQLite-native (SELECT FROM leads, UPDATE leads), idempotent (skip if place_id NOT NULL), dry-run default, `--live` flag
+6. Dry-run sanity check: `py -3 enrich_places.py --limit 10` — pamatom queries, NEhit'inam live API
+7. Live smoke: `py -3 enrich_places.py --live --limit 1000` (~$0 if first 1k of month, ~$35 if quota exhausted)
+8. Manual spot-check 30 grąžintų leads — accuracy + AU geo + name match quality
+9. GO/NO-GO decision dėl full 100k mass run (~$3,465)
 
 **Carry-overs:**
-- Brave key revoke + naujas key į `.env`
-- DNS stage rerun (jei `output/no_website.csv` neegzistuoja) arba copy iš senesnio environment'o
+- dashboard/ folderis push'inamas į repo
+- GCP setup + Places API key
+- DNS stage rerun (jei vis tiek norėsim DNS-based filtravimo papildomam coverage'ui)
 - Importer.py bug fix (route social CSV į dedicated importer)
+- find_social.py adaptacija prie Places duomenų (optional, jei Places coverage < 100%)
 
 ## Istorija
 
 | Data | Trukmė | Self-score | Pabaigtumas | Santrauka |
 |---|---|---|---|---|
-| 2026-05-25 #6 | ~1.5h | 8/10 | 79% | Plan A start: enrich_abr.py sukurta + ABR Lookup JSONP integracija + memory init + Brave key leak fix. Live smoke laukia GUID registracijos. |
+| 2026-05-25 #6 | ~2h | 7/10 | 74% | Plan A→B pivot mid-session. enrich_abr.py sukurtas tada ištrintas. Places API research baigtas ($35/1k Enterprise, 1k free/mėn). Memory init pilnas. Code laukia dashboard/ push'o. |
 | 2026-05-25 #5 | ~3h | 7/10 | 77% | find_social.py validated end-to-end (V1 false positive → V2 100% precision via AU geo gate + 3-query strategy). Brave ceiling exposed at 5% recall. Plan A→B→C strategy agreed. Memory + docs synced. |
 
 ### Ką padarėme

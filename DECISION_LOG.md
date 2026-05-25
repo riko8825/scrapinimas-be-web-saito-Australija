@@ -4,7 +4,57 @@ Architektūriniai sprendimai. Naujausi viršuje.
 
 ---
 
-## 2026-05-25 (sesija #6) — Plan A start: enrich_abr.py + ABR Lookup JSONP
+## 2026-05-25 (sesija #6, antra pusė) — Plan A → Plan B pivot: skip ABR Lookup, jump to Google Places
+
+**Sprendimas:** Plan A (enrich_abr.py + ABR Lookup) atmesta in-flight. enrich_abr.py ištrintas, ABR_* env config pašalintas. Einam tiesiai į Plan B — Google Places API (New) Text Search v1 — kaip primary trading_name + phone + website šaltinis.
+
+**Priežastys:**
+
+1. **Single-source-of-truth value** — vienas Places Text Search call'as grąžina viską (displayName, formattedAddress, websiteUri, internationalPhoneNumber, place_id, types) vienu request'u. ABR Lookup tik trading_name → vis tiek reikėtų Brave/Places antru hop'u, kad gautumėm contact info outreach'ui. Per 2 hops vietoj 1 = dvigubai daugiau failure mode'ų.
+
+2. **GUID friction eliminated** — ABR reikalauja registracijos formos + email lūkesčio. GCP Places API key — instant (project + enable API + credentials). Vartotojo aiškus signal'as: "darome kaip tu sakei. be jokio brave" — eliminate paslėptus external dependency'us.
+
+3. **Cost model patikslintas** (per sesijos #6 research):
+   - Text Search Enterprise SKU: **$35/1000 calls** (0-100k tier), su `websiteUri` + `internationalPhoneNumber` field mask
+   - **Free tier: pirmi 1,000 calls/mėn FREE** → smoke test ant 1000 leads = **$0**, jei tilps į vieno mėnesio quota
+   - Mass run: 100k ABNs × $35/1000 = **$3,500 USD** (vs sesijos #5 estimate $4,700 — 25% cheaper, nes Text Search vienu call'u atstoja 2-step Text Search + Place Details)
+   - 1k smoke: **$0-$35** priklausomai nuo mėnesio quota state'o
+
+4. **AU SMB coverage** — Google Places turi geriausią AU verslo coverage'ą (oficialūs Google My Business profile'iai). Hipotezė: ≥60% AU SMB segmento turės place_id. Tikrinsim per smoke test.
+
+**Trade-off'ai:**
+
+- **Vendor lock-in to Google** — Places API priklauso nuo GCP billing'o + ToS. Pakeisti į kitą šaltinį (Apify, Yelp, OpenStreetMap) reiktų papildomo darbo.
+- **Free tier ribota** — 1k calls/mėn Enterprise SKU. Smoke testo > 1000 ABNs jau kainuoja. Mass run BŪTINAI reikia billing setup + alert'ai.
+- **Cold lead matching risk** — Text Search grąžina top result, bet jei ABN turi labai bendrą pavadinimą ("Plumbing Services") + AU postcode bias, gali grąžinti kitą verslą su tuo pat pavadinimu. Tikrinsim spot-check'u smoke testo metu.
+
+**Architektūra (planned, code laukia dashboard/ push'o):**
+
+- `enrich_places.py` — async httpx + SQLite-native (SELECT/UPDATE į `outreach.db leads` lentelę, NE per CSV roundtrip)
+- Idempotent: SKIP ABNs, kurie jau turi `place_id` užpildytą
+- Dry-run mode default'as (`PLACES_DRY_RUN=true` per .env) — paleidimas BE live API spustelėjimo. `--live` flag'as override'ina
+- Field mask request: `places.id,places.displayName,places.formattedAddress,places.websiteUri,places.internationalPhoneNumber,places.types`
+- Query format: `"<business_name>" <postcode>` su `regionCode: "AU"` body field
+- Concurrency=10 (default Google quota 600 QPM = 10 QPS, conc=10 atitinka steady state)
+
+**Verifikacija (per sesijos #6 antrą pusę):**
+- enrich_abr.py ištrintas iš tracked files
+- .env.example ABR_* config pakeistas į PLACES_* config
+- Google Places API research baigtas: endpoint, headers, field mask, pricing patvirtinta
+- DECISION_LOG įrašas dokumentuoja pivot rationale + cost model
+
+**Blokuoja toliau:** `dashboard/` direktorija (su `db.py`, `importer.py`, schema) neegzistuoja šitam git repo'e (sesijos #4 dashboard niekada nebuvo committed). enrich_places.py reikia žinoti `leads` lentelės schemą prieš SELECT/UPDATE pattern'ą. Vartotojas push'ins `dashboard/` į repo prieš sesiją #7.
+
+**Operacinis impact:**
+- PROJECT_STATUS modulis 3c "Plan A — ABR Lookup" pakeistas į "Plan B — Places enrichment"
+- Memory `abr_lookup_api.md` palieku (referensui, jei kada grįžtumėm), pridedu naują `places_api.md`
+- Sesijos #5 strategy A→B→C tampa: A SKIPPED, B is now primary path, C (Apify FB/IG + Claude vision) lieka conditional jei Places hit-rate < 60%
+
+---
+
+## 2026-05-25 (sesija #6) — Plan A start: enrich_abr.py + ABR Lookup JSONP [SUPERSEDED]
+
+> **Status:** SUPERSEDED tos pačios sesijos antroje pusėje. Žr. „Plan A → Plan B pivot" įrašą viršuje. enrich_abr.py ištrintas. Įrašas laikomas archyvui dėl architektūrinio konteksto, kuris vis dar gali būti vertingas, jei Places API kelias užklius (pvz., quota'os, billing'o blokai).
 
 **Sprendimas:** Sukurtas [enrich_abr.py](enrich_abr.py) — async ABR Lookup API wrapper'is, kuris pildo `trading_name` stulpelį prie `no_website.csv`. Naudojamas `https://abr.business.gov.au/json/AbnDetails.aspx` JSONP endpoint'as su autentifikacijos GUID.
 
