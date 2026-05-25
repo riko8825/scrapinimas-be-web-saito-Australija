@@ -4,6 +4,43 @@ Architektūriniai sprendimai. Naujausi viršuje.
 
 ---
 
+## 2026-05-25 (sesija #6) — Plan A start: enrich_abr.py + ABR Lookup JSONP
+
+**Sprendimas:** Sukurtas [enrich_abr.py](enrich_abr.py) — async ABR Lookup API wrapper'is, kuris pildo `trading_name` stulpelį prie `no_website.csv`. Naudojamas `https://abr.business.gov.au/json/AbnDetails.aspx` JSONP endpoint'as su autentifikacijos GUID.
+
+**Architektūros sprendimai:**
+
+1. **JSONP, ne SOAP/XML** — ABR siūlo 3 transport'us (SOAP WSDL, RPC, JSONP). JSONP pasirinktas, nes: a) lengviausias parse'inti (regex unwrap + `json.loads`), b) jokių XML schema dependency'ų, c) JSON payload mažesnis nei SOAP envelope.
+
+2. **`_pick_trading_name()` heuristika** — `BusinessName[]` array gali turėti 0..N įrašų. Pasirenkam pirmą, kuris **NEturi** legal suffix (`pty ltd`, `proprietary limited`, `limited`, `inc`). Fallback'as: pirmas iš sąrašo as-is. Jei `BusinessName[]` tuščias — paliekam `trading_name=""`, find_social.py turės degrade'inti į `EntityName`.
+
+3. **Concurrency = 5** (vs check_dns.py = 100) — ABR ToS nepublic'ina rate limit'o, bet "politeness" reikalavimas yra. 5 in-flight reikalauja ~5 req/s steady state, kas yra atsargu prieš government endpoint'ą. 97k ABNs × 200ms = ~3.4h pilnam run'ui — acceptable.
+
+4. **Resumable design** — output CSV su `abn` stulpeliu yra source of truth. Pakartotinis paleidimas skip'ina jau apdoroptus ABNs (`_load_existing()`). `--no-resume` flag'as re-fetch'ui force'ina. Reikalinga, nes pilnas 97k run'as paaiškint koks taps interruptable (^C, network blip, ABR ToS lockout).
+
+5. **Per-record failures NEpaaštrina** — kiekvienas ABN, kuriam ABR grąžina HTTP error, `Message: "GUID not recognised"`, arba JSONP parse failure → log + return dict su `abr_error` field'u, NE raise. CSV row vis tiek įrašoma su tuščiais name field'ais (operator gali rankiniu patikrint).
+
+**Priežastis:**
+- Sesija #5 DECISION_LOG patvirtino Plan A (ABR trading_name boost) kaip pirmą žingsnį iš A→B→C strategijos
+- ABR Lookup yra **vienintelis nemokamas, viešas, ToS-compliant šaltinis** AU verslo trading name discovery'ui. Apify business name scrapers irgi veikia, bet kainuoja ~$0.50/lookup ir gali pažeisti ABR ToS
+- WebFetch sesijos #6 pradžioje patvirtino endpoint live (live response su `Message: "GUID not recognised"` patikrino response shape'ą)
+- `enrich_abr.py` self-test'ai (JSONP unwrap + trading_name picker + error envelope) — visi PASS, kodas paruoštas live GUID smoke testui
+
+**Verifikacija (per sesiją #6):**
+- `py -3 -m py_compile enrich_abr.py` — pereina
+- `py -3 enrich_abr.py --help` — visi CLI flag'ai veikia, imports clean
+- Inline sanity test'ai: 3/3 PASS (JSONP unwrap teisingas, trading name picker su 4 scenarijais, error envelope graceful handling)
+- **Live smoke test (100 ABNs ant `no_website.csv`)** — atidėtas iki vartotojas registruos GUID per https://abr.business.gov.au/Tools/WebServicesAgreement
+
+**Trade-off'as:**
+- `_pick_trading_name()` heuristika nėra perfect — kai kurie verslai turi vienintelį `BusinessName` su legal suffix'u (pvz., "Smith & Co Pty Ltd" — ir tai jų brand), o mes vis tiek grąžinsim kaip-yra (fallback path). Acceptable, nes find_social.py vis tiek geriau performs su "Smith & Co Pty Ltd" nei su raw EntityName "SMITH AND COMPANY PROPRIETARY LIMITED".
+- 97k×200ms = 3.4h pilnam run'ui. Ne real-time, bet vienkartinis batch job — acceptable. Galima parallelinti iki 10 (`ABR_CONCURRENCY=10`) jei ToS leis.
+- ABR Lookup neturi `created_at`/`updated_at` field'ų BusinessName'ams — neaišku, kurie yra "naujausi" ar "aktyviausi". Imam pirmą iš sąrašo, kuris atitinka heuristiką. Operator'as gali rankiniu cross-check'inti per dashboard'ą.
+
+**Brave key leak fix:** sesijos #6 pradžioje aptikta, kad `.env.example` turi realų `BRAVE_API_KEY=BSAh5c6r_...` value (committed į public GitHub repo). Pakeista į `BRAVE_API_KEY=your_key_here`. Vartotojas rankiniu revoke'ins compromised key per Brave dashboard ir generuos naują, kurį įdės į `.env` (gitignored).
+
+---
+
 ## 2026-05-25 (sesija #5) — Social discovery pivot: A → B → conditional C
 
 **Sprendimas:** `find_social.py` (Brave Search) palikti Tested būsenoje, BET neinvestuoti daugiau tuning'o ir nelaikyti jo primary discovery layer'iu. Naujas trifazis kelias social profilių radimui:

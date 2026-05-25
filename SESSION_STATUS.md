@@ -1,6 +1,64 @@
 # SESSION_STATUS
 
-## Paskutinė sesija: 2026-05-25 (sesija #5 — find_social.py validated end-to-end + Brave ceiling exposed + Plan A→B→C agreed)
+## Paskutinė sesija: 2026-05-25 (sesija #6 — Plan A: enrich_abr.py sukurta + ABR Lookup JSONP integracija + memory init + Brave key leak fix)
+
+### Ką padarėme
+
+**Memory init:**
+- Sukurta visa memory infrastruktūra `~/.claude/projects/c--Users-pinig-scrapinimas-be-web-saito-Australija/memory/`:
+  - `MEMORY.md` indeksas (6 pointer'iai)
+  - `user_role.md` — Empirra founder profile + komunikacijos preferencijos
+  - `project_state.md` — pipeline state per sesijos #6 start, blockers, Plan A→B→C strategija
+  - `find_social_brave_ceiling.md` — 5% recall ceiling rationale
+  - `feedback_clickable_links.md` — markdown links taisyklė
+  - `run_py_dns_contract.md` — stage_dns tuple-unpack pattern
+  - `abr_lookup_api.md` — JSONP endpoint specs + GUID auth + response shape
+
+**Brave key leak fix:**
+- Aptikta sesijos #6 start: `.env.example` faile committed realus `BRAVE_API_KEY=BSAh5c6r_...` value (public GitHub repo). Pakeista į `BRAVE_API_KEY=your_key_here`. Vartotojas TURI revoke'inti compromised key per Brave dashboard ir generuoti naują (žr. carry-over).
+
+**Plan A — enrich_abr.py:**
+- Research: ABR Lookup endpoint `https://abr.business.gov.au/json/AbnDetails.aspx` (JSONP, params: `abn`, `guid`, `callback`). Registration: https://abr.business.gov.au/Tools/WebServicesAgreement. WebFetch patvirtino live endpoint (`Message: "The GUID entered is not recognised as a Registered Party"` su test GUID).
+- Sukurtas [enrich_abr.py](enrich_abr.py) — async httpx + tenacity exponential backoff + tqdm progress + JSONP unwrap + resumable design (skip already-processed ABNs). Concurrency=5 default (politeness, ne hammering).
+- `_pick_trading_name()` heuristika: pirmas `BusinessName` be legal suffix (`pty ltd`, `proprietary limited`, `inc`); fallback — pirmas as-is; jei tuščia — empty string (find_social.py fallback į `business_name`).
+- 5 nauji env'ai pridėti į `.env.example`: `ABR_GUID`, `ABR_ENDPOINT`, `ABR_CONCURRENCY`, `ABR_TIMEOUT`, `ABR_ENRICHED_CSV`.
+- Sanity tests: `py_compile` PASS, `--help` PASS, inline JSONP unwrap + name picker + error envelope — 3/3 PASS.
+
+**Memory updates:**
+- `project_state.md` updated session #6 snapshot
+- `abr_lookup_api.md` — naujas reference memory
+- `MEMORY.md` indeksas atnaujintas
+
+### Kas liko / nepatvirtinta
+
+- **Live smoke test su realiu GUID atidėtas** — laukia, kol vartotojas užregistruos ABR GUID per https://abr.business.gov.au/Tools/WebServicesAgreement (~5 min form + email).
+- **Brave key revoke nepadarytas** — vartotojas turi rankiniu revoke'inti `BSAh5c6r_QHMkvH-K4zo2EcvjldXgF2` per https://api.search.brave.com/app/keys ir įdėti naują į `.env`. Senas key vis dar git history (pakeitimas ne purge, o overwrite).
+- **find_social.py nepritaikytas trading_name'ui** — kai enrichment baigsis, reikės modifikuoti find_social.py, kad query string'e naudotų `trading_name` (jei populated), fallback `business_name`.
+- **DNS no_website.csv neegzistuoja šitam clone'ui** — `output/` direktorija tuščia. Kad smoke testas veiks, reikės arba paleisti DNS stage'ą iš naujo, arba copy'inti `no_website.csv` iš ankstesnio environment'o.
+- **Importer.py bug** (carry-over #5) — `--csv has_social.csv` perrašo business_name. Workaround dokumentuotas, fix odojamas.
+- **Dashboard UI loop nepatvirtintas** (carry-over iš sesijos #4).
+
+### Kitas žingsnis
+
+**SESIJA #7 (kai GUID gautas):**
+1. Vartotojas užregistruoja ABR GUID (~5 min) ir įdeda į `.env` `ABR_GUID=<gautas-guid>`
+2. Verify: `py -3 enrich_abr.py --limit 1` ant test ABN — pažiūrim, ar gauname `trading_name` populated
+3. Smoke test: `py -3 enrich_abr.py --limit 100` ant `no_website.csv` — patvirtinam ABR endpoint stable + matuojam `trading_name` populated rate (target ≥60% AU SMB)
+4. Jei smoke OK — full run: `py -3 enrich_abr.py` ant 97k ABNs (~3.4h ETA su default conc=5)
+5. Modify `find_social.py` — naudoti `trading_name` (jei populated) query string'e, fallback `business_name`
+6. Re-run `find_social.py --limit 20` su `trading_name` — palyginti hit-rate vs sesijos #5 V2 baseline (target: 5% → ≥15%)
+
+**Carry-overs:**
+- Brave key revoke + naujas key į `.env`
+- DNS stage rerun (jei `output/no_website.csv` neegzistuoja) arba copy iš senesnio environment'o
+- Importer.py bug fix (route social CSV į dedicated importer)
+
+## Istorija
+
+| Data | Trukmė | Self-score | Pabaigtumas | Santrauka |
+|---|---|---|---|---|
+| 2026-05-25 #6 | ~1.5h | 8/10 | 79% | Plan A start: enrich_abr.py sukurta + ABR Lookup JSONP integracija + memory init + Brave key leak fix. Live smoke laukia GUID registracijos. |
+| 2026-05-25 #5 | ~3h | 7/10 | 77% | find_social.py validated end-to-end (V1 false positive → V2 100% precision via AU geo gate + 3-query strategy). Brave ceiling exposed at 5% recall. Plan A→B→C strategy agreed. Memory + docs synced. |
 
 ### Ką padarėme
 

@@ -1,7 +1,7 @@
 # PROJECT_STATUS — ABR Outreach Pipeline
 
-**Last updated:** 2026-05-25 (sesija #5)
-**Phase:** Phase 7 real-data validation — parser + DNS DONE, social discovery strategy pivoted to A→B→C. + Phase 9 Dashboard.
+**Last updated:** 2026-05-25 (sesija #6)
+**Phase:** Phase 7 real-data validation — parser + DNS DONE, social discovery strategy pivoted to A→B→C. **Plan A code ready (enrich_abr.py)**, awaiting live GUID smoke. + Phase 9 Dashboard.
 
 ## Tikslas
 
@@ -20,13 +20,16 @@ Status legend: Planned = 0%, In Build = 30%, Tested = 70%, Production = 100%, Bl
 | 2 | DNS check | [check_dns.py](check_dns.py) | **Production** | Validated 2026-05-25 ant 97,801 ACT leads (1h 45min, 15 biz/s, 0 errors) → 97,534 no-website. Known: ~10% false positives nuo UDP resolver throttling. |
 | 3 | Social search (Brave) | [find_social.py](find_social.py) | **Tested** | Sesija #5: paleistas end-to-end ant 20 leads × 2 iteracijų. V1 (raw) 1/20 false positive; V2 (po hardening — `_query_clean` + 3-query strategy + `_is_australian` gate) 1/20 true positive (Hardy Landscaping NT). Precision 0% → 100%. **Recall plateau'auja ties 5% — Brave nėra tinkamas primary šaltinis**. Modulis veikia teisingai savo apimtyje; bus naudojamas po Plan A trading_name boost'o. |
 | 3b | Social discovery — pivoted strategy | (planned) | **In Build (architecture only)** | Sesija #5: sutarta A→B→conditional C strategija. A: ABR Lookup API trading_name enrichment (free, 1 sesija). B: Google Places API smoke test 1000 leads (~$30, 2 sesijos). C (conditional): pilnas Places + Apify FB/IG + Claude vision pipeline ($4,700 mass run, 9-11 sesijų). Decision criteria DECISION_LOG sesija #5. |
+| 3c | Plan A — ABR Lookup enrichment | [enrich_abr.py](enrich_abr.py) | **In Build** | Sesija #6: kodas paruoštas (async httpx + JSONP unwrap + tenacity retry + resumable + trading_name picker heuristika). Sanity tests 3/3 PASS (compile + --help + inline JSONP/picker/error envelope). Live smoke laukia vartotojo GUID registracijos per https://abr.business.gov.au/Tools/WebServicesAgreement. |
 | 4 | Outreach generator | [generate_outreach.py](generate_outreach.py) | **Tested** | 27 templates su import-time assert'ais, end-to-end test'as ant synthetic dataset pereina |
 | 5 | Orchestrator | [run.py](run.py) | **Tested** | Pre-flight, --step/--test/--state/--gst-status/--resume, Telegram, summary table; parse + DNS stage'ai Production-validated, social/messages priklauso nuo API |
 | 6 | Unit test suite | [test_pipeline.py](test_pipeline.py) | **Production** | 46/46 PASS; tikrina visus 4 core helpers + mocked DNS |
 | 7 | Dashboard (outreach tracking) | [dashboard/app.py](dashboard/app.py) | **Tested** | Streamlit, 5 tabai (Overview/Leads/Analytics/Activity/Settings), SQLite [dashboard/db.py](dashboard/db.py), CSV importer su industry auto-detect, LT/EN i18n. Paleistas — HTTP 200, 159,070 leads loaded. UI interaktyvūs flow (mark sent, edit detail, audit log) **nepatvirtinti naršyklėje**. |
 
-**Pabaigtumas:** (1.0 + 1.0 + 0.7 + 0.3 + 0.7 + 0.7 + 1.0 + 0.7) / 8 × 100% = **77%**
+**Pabaigtumas:** (1.0 + 1.0 + 0.7 + 0.3 + 0.3 + 0.7 + 0.7 + 1.0 + 0.7) / 9 × 100% = **74%**
 
+> Sesija #6 (2026-05-25): pridėtas naujas modulis #3c "Plan A — ABR Lookup enrichment" In Build (kodas paruoštas, smoke laukia GUID). Denominator padidėjo 8 → 9, bendras pabaigtumas matematiškai krito 77% → 74%, BET reali progress'as pozityvi — paskutinis blocker'is Plan A startui (kodas neegzistuoja) išspręstas; liko tik external dependency (GUID email).
+>
 > Sesija #5 (2026-05-25): find_social.py In Build → Tested (+10pp recall pipeline savo kontekste), bet pridėjome naują modulį #3b "Social discovery pivoted strategy" In Build (architecture only) į denominator. Bendras pabaigtumas išliko 77%. Tikras "value delivered" — Brave kelio limitai apnuoginti su real-world skaičiais; nustatytas profesionalus alternatyvus kelias (A→B→C) su konkrečiomis sąnaudomis ir laiko prognozėmis.
 
 ## Iki 100% trūksta
