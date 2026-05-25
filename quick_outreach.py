@@ -154,18 +154,29 @@ def _select_leads(
 
 
 def _mark_exported(db: sqlite3.Connection, abns: list[str]) -> int:
-    """Atžymėk outreach.status='exported' šiems ABNs, kad nepasikartotų."""
+    """Atžymėk outreach.status='exported' šiems ABNs, kad nepasikartotų.
+
+    outreach lentelė jau turi eilutes visiems leads (default status='new'),
+    todėl darome UPDATE, ne INSERT. updated_at + exported_at abu užpildomi.
+    """
     now = datetime.now().isoformat(timespec="seconds")
     n = 0
     for abn in abns:
-        db.execute(
-            """INSERT INTO outreach (abn, status, exported_at)
-               VALUES (?, 'exported', ?)
-               ON CONFLICT(abn) DO UPDATE SET
-                 status='exported',
-                 exported_at=excluded.exported_at""",
-            (abn, now),
+        cur = db.execute(
+            """UPDATE outreach
+               SET status='exported',
+                   exported_at=?,
+                   updated_at=?
+               WHERE abn=?""",
+            (now, now, abn),
         )
+        if cur.rowcount == 0:
+            # Lead'as nepatekęs į outreach lentelę (rare) — pridėk
+            db.execute(
+                """INSERT INTO outreach (abn, status, exported_at, updated_at)
+                   VALUES (?, 'exported', ?, ?)""",
+                (abn, now, now),
+            )
         n += 1
     db.commit()
     return n
