@@ -43,44 +43,79 @@ from dashboard.db import connect, default_db_path  # noqa: E402
 # ---------------------------------------------------------------------------
 
 def _industry_hook(industry: str | None) -> str:
-    """Industry-specific opening line."""
+    """Industry-specific noun fragment, paste-ready into "...businesses like
+    yours in {hook}". Always reads naturally in that sentence.
+
+    Examples (in sentence "I help businesses like yours in {hook}..."):
+      - "in the electrical trade" — yes
+      - "in dental healthcare" — yes
+      - "in hospitality" — yes
+    """
     hooks = {
-        "electrical": "your electrical work",
-        "plumbing": "your plumbing services",
-        "construction": "your construction projects",
-        "landscaping": "your landscaping work",
-        "cleaning": "your cleaning services",
-        "automotive": "your automotive work",
-        "transport": "your transport services",
-        "hospitality": "your business",
-        "retail": "your business",
-        "real_estate": "your real estate work",
-        "beauty": "your beauty services",
-        "fitness": "your fitness business",
-        "healthcare": "your practice",
-        "hvac": "your HVAC services",
+        "electrical": "the electrical trade",
+        "plumbing": "plumbing",
+        "construction": "construction",
+        "landscaping": "landscaping",
+        "cleaning": "cleaning services",
+        "automotive": "automotive repair",
+        "transport": "transport and logistics",
+        "hospitality": "hospitality",
+        "retail": "retail",
+        "real_estate": "real estate",
+        "beauty": "beauty and salon services",
+        "fitness": "the fitness industry",
+        "healthcare": "healthcare",
+        "hvac": "HVAC",
     }
-    return hooks.get(industry or "", "your business")
+    return hooks.get(industry or "", "your industry")
 
 
-def _build_dm_message(trading_name: str, industry: str | None) -> str:
-    """FB Messenger DM — kazualus, paste-ready su 1 placeholder'iu."""
+def _build_dm_message(
+    trading_name: str,
+    industry: str | None,
+    has_website: bool = False,
+) -> str:
+    """FB Messenger DM — kazualus, paste-ready su 1 placeholder'iu.
+
+    Adaptyvus: skirtingi opening'ai jei turi vs ne svetainę. NIEKADA
+    nesakyk "don't have a website" jei turi — instant trust killer.
+    """
     name = trading_name or "team"
     hook = _industry_hook(industry)
-    return (
-        f"Hi {name} team,\n\n"
-        f"Just came across your page — {{{{ADD_DETAIL_FROM_THEIR_PAGE}}}} "
-        f"really stood out.\n\n"
-        f"I noticed you do {hook} but don't have a full website yet. "
-        f"I help small AU businesses like yours get a clean, mobile-friendly "
-        f"site up in 2-3 days for AUD $500 (fully yours, no monthly fees).\n\n"
-        f"Would a quick 10-min chat make sense? Happy to send a few examples.\n\n"
-        f"Cheers,\nRokas (Empirra)"
-    )
+
+    if has_website:
+        # Verslas TURI svetainę — siūlom redesign/refresh + AI automation
+        return (
+            f"Hi {name} team,\n\n"
+            f"Just came across your page — {{{{ADD_DETAIL_FROM_THEIR_PAGE}}}} "
+            f"really stood out.\n\n"
+            f"I work with small AU businesses in {hook} to refresh their "
+            f"website + add things like an AI chatbot or auto-booking. "
+            f"Usually $500 for a redesign or $200/mo for the AI tools.\n\n"
+            f"Would a quick 10-min chat make sense? No pressure.\n\n"
+            f"Cheers,\nRokas (Empirra)"
+        )
+    else:
+        return (
+            f"Hi {name} team,\n\n"
+            f"Just came across your page — {{{{ADD_DETAIL_FROM_THEIR_PAGE}}}} "
+            f"really stood out.\n\n"
+            f"Noticed you don't have a website yet — I help small AU "
+            f"businesses like yours in {hook} get a clean, mobile-friendly "
+            f"site up in 2-3 days for AUD $500 (fully yours, no monthly fees).\n\n"
+            f"Would a quick 10-min chat make sense? Happy to send a few examples.\n\n"
+            f"Cheers,\nRokas (Empirra)"
+        )
 
 
-def _build_email_subject(trading_name: str, industry: str | None) -> str:
+def _build_email_subject(
+    trading_name: str,
+    industry: str | None,
+    has_website: bool = False,
+) -> str:
     """Email subject — short, no spam triggers, no caps, no $$."""
+    if has_website:
+        return f"Quick thought about {trading_name}'s website"
     if industry in ("electrical", "plumbing", "hvac", "construction", "automotive"):
         return f"Quick question about {trading_name}'s online presence"
     if industry in ("healthcare", "beauty", "legal", "accounting"):
@@ -88,23 +123,51 @@ def _build_email_subject(trading_name: str, industry: str | None) -> str:
     return f"Question about {trading_name}"
 
 
-def _build_email_body(trading_name: str, industry: str | None) -> str:
-    """Email body — professional + casual, AUD $500 transparent."""
+def _build_email_body(
+    trading_name: str,
+    industry: str | None,
+    website: str | None = None,
+) -> str:
+    """Email body — adaptyvus pagal website status.
+
+    Jei TURI svetainę: pakomentuojam stipriąją puse, pasiūlom AI automation.
+    Jei NETURI: pasiūlom $500 website setup.
+
+    NIEKADA nesakyk "noticed you don't have a website" jei turi.
+    """
     name = trading_name or "there"
     hook = _industry_hook(industry)
-    return (
-        f"Hi {name} team,\n\n"
-        f"I came across your business and noticed you don't have a website "
-        f"yet — just wanted to reach out.\n\n"
-        f"I help small Australian businesses with {hook} get a clean, "
-        f"mobile-friendly site online in 2-3 days. One-off cost of AUD $500, "
-        f"no monthly fees, you own everything.\n\n"
-        f"If you'd like to chat about it (no pressure either way), reply to "
-        f"this email or check out a few examples at empirra.com.\n\n"
-        f"Cheers,\n"
-        f"Rokas\n"
-        f"Empirra | empirra.com\n"
-    )
+
+    if website:
+        # TURI svetainę — siūlom AI automation arba redesign
+        return (
+            f"Hi {name} team,\n\n"
+            f"I came across {website} and {{{{COMPLIMENT_ABOUT_SITE_OR_BIZ}}}}. "
+            f"Just wanted to reach out.\n\n"
+            f"I help small Australian businesses like yours in {hook} add AI "
+            f"tools to their site — things like a smart chatbot for after-hours "
+            f"enquiries, auto-booking systems, or lead capture forms that "
+            f"actually convert. Usually $200-500/mo depending on setup.\n\n"
+            f"If you'd like to chat (no pressure either way), reply here or "
+            f"check out empirra.com.\n\n"
+            f"Cheers,\n"
+            f"Rokas\n"
+            f"Empirra | empirra.com\n"
+        )
+    else:
+        return (
+            f"Hi {name} team,\n\n"
+            f"I came across your business and noticed you don't have a website "
+            f"yet — just wanted to reach out.\n\n"
+            f"I help small Australian businesses like yours in {hook} get a "
+            f"clean, mobile-friendly site online in 2-3 days. One-off cost of "
+            f"AUD $500, no monthly fees, you own everything.\n\n"
+            f"If you'd like to chat about it (no pressure either way), reply "
+            f"to this email or check out a few examples at empirra.com.\n\n"
+            f"Cheers,\n"
+            f"Rokas\n"
+            f"Empirra | empirra.com\n"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +317,8 @@ def main(argv: list[str] | None = None) -> int:
     for lead in leads:
         trading = lead["trading_name"] or lead["business_name"]
         industry = lead["industry_keyword"]
+        website = lead["website_url"]
+        has_website = bool(website and website.strip())
         rows.append({
             "abn": lead["abn"],
             "business_name": lead["business_name"],
@@ -265,20 +330,20 @@ def main(argv: list[str] | None = None) -> int:
             "priority_score": lead["priority_score"],
             "phone": lead["phone"] or "",
             "email": lead["contact_email"] or "",
-            "website": lead["website_url"] or "",
+            "website": website or "",
             "fb_url": lead["scraped_fb_url"] or "",
             "ig_url": lead["scraped_ig_url"] or "",
             "linkedin_url": lead["linkedin_url"] or "",
             "email_subject": (
-                _build_email_subject(trading, industry)
+                _build_email_subject(trading, industry, has_website)
                 if lead["contact_email"] else ""
             ),
             "email_body": (
-                _build_email_body(trading, industry)
+                _build_email_body(trading, industry, website)
                 if lead["contact_email"] else ""
             ),
             "dm_message": (
-                _build_dm_message(trading, industry)
+                _build_dm_message(trading, industry, has_website)
                 if lead["scraped_fb_url"] else ""
             ),
             "sent": "",
