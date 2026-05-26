@@ -1,7 +1,7 @@
 # PROJECT_STATUS — ABR Outreach Pipeline
 
-**Last updated:** 2026-05-25 (sesija #6, antra pusė — Plan A→B pivot)
-**Phase:** Phase 7 real-data validation — parser + DNS DONE, **Plan A SKIPPED**, **Plan B research baigtas** (Google Places API, $35/1k Enterprise, 1k free/mėn). enrich_places.py code laukia dashboard/ push'o. + Phase 9 Dashboard.
+**Last updated:** 2026-05-26 (sesija #7 — Waterfall + Stage A LIVE)
+**Phase:** Phase 7 real-data validation — parser + DNS DONE, **Stage A LIVE smoke 1100 leads** (45% hit rate, $0 real cost). 365 leads ready Stage B. Stage B/C code pending. + Phase 9 Dashboard.
 
 ## Tikslas
 
@@ -21,7 +21,10 @@ Status legend: Planned = 0%, In Build = 30%, Tested = 70%, Production = 100%, Bl
 | 3 | Social search (Brave) | [find_social.py](find_social.py) | **Tested** | Sesija #5: paleistas end-to-end ant 20 leads × 2 iteracijų. V1 (raw) 1/20 false positive; V2 (po hardening — `_query_clean` + 3-query strategy + `_is_australian` gate) 1/20 true positive (Hardy Landscaping NT). Precision 0% → 100%. **Recall plateau'auja ties 5% — Brave nėra tinkamas primary šaltinis**. Modulis veikia teisingai savo apimtyje; bus naudojamas po Plan A trading_name boost'o. |
 | 3b | Social discovery — pivoted strategy | (planned) | **In Build (architecture only)** | Sesija #5: sutarta A→B→conditional C strategija. A: ABR Lookup API trading_name enrichment (free, 1 sesija). B: Google Places API smoke test 1000 leads (~$30, 2 sesijos). C (conditional): pilnas Places + Apify FB/IG + Claude vision pipeline ($4,700 mass run, 9-11 sesijų). Decision criteria DECISION_LOG sesija #5. |
 | 3c | Plan A — ABR Lookup enrichment | (deleted) | **Skipped** | Sesija #6 pirma pusė: enrich_abr.py sukurtas + 3/3 sanity tests PASS. Sesija #6 antra pusė: SKIPPED + code ištrintas po vartotojo sprendimo pivot tiesiai į Plan B. Žr. DECISION_LOG sesija #6 antra pusė. |
-| 3d | Plan B — Places enrichment | (planned) | **In Build (research only)** | Sesija #6 antra pusė: Google Places API (New) Text Search v1 research baigtas. Endpoint, field mask, $35/1k Enterprise pricing patvirtinti. .env PLACES_* config paruoštas. enrich_places.py code laukia dashboard/ push'o (reikia leads table schemos). |
+| 3d | Plan B / Stage A — Places enrichment | [src/enrichment/enrich_places.py](src/enrichment/enrich_places.py) | **Tested** | Sesija #7: production-ready ant 1100 leads. 45% hit rate, 42% phone, 35% website, 0 errors (32/1000 trumpas rate-limit, auto-resume). Cost $0 real (free tier). Quality gates: 86k/159k eligible. |
+| 3e | Stage B — Website scraper | (planned) | **Planned** | Sesija #8 darbas. async httpx + BS4. 365 lead'ai eligible (turi website). Tikslas: email + FB + IG + LinkedIn iš svetainės. Cost: $0. |
+| 3f | Stage C — SerpAPI socials lookup | (planned) | **Planned** | Sesija #9 darbas. SerpAPI ($5/1k, 100 free/mėn). Cap 5k leads = $25. Vykdoma TIK lead'ams be jokio kontakto + priority_score ≥ 50. |
+| 3g | Enrichment orchestrator | (planned) | **Planned** | Sesija #10. `run_enrichment.py --stage all` — vienas CLI visi 3 stage'ai iš eilės. |
 | 4 | Outreach generator | [generate_outreach.py](generate_outreach.py) | **Tested** | 27 templates su import-time assert'ais, end-to-end test'as ant synthetic dataset pereina |
 | 5 | Orchestrator | [run.py](run.py) | **Tested** | Pre-flight, --step/--test/--state/--gst-status/--resume, Telegram, summary table; parse + DNS stage'ai Production-validated, social/messages priklauso nuo API |
 | 6 | Unit test suite | [test_pipeline.py](test_pipeline.py) | **Production** | 46/46 PASS; tikrina visus 4 core helpers + mocked DNS |

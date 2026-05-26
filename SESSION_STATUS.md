@@ -1,6 +1,89 @@
 # SESSION_STATUS
 
-## Paskutinė sesija: 2026-05-25 (sesija #6 — Plan A→B pivot mid-session: enrich_abr.py ištrintas, perėjom į Google Places API; code laukia dashboard/ push'o)
+## Paskutinė sesija: 2026-05-26 (sesija #7 — Waterfall architecture + Stage A LIVE: 1100 leads, 45% hit rate, $0 real cost)
+
+### Ką padarėme
+
+**Waterfall enrichment architecture** (Stages A=Places, B=Website scrape, C=SerpAPI):
+- Solution architect agentas (`solution-architect` subagent) suprojektavo pilną pipeline'ą su quality gate'ais ir budget guards
+- Nauja DB schema: `enrichment` table (21 stulpeliai) + `enrichment_runs` table (audit + cost tracking) — saugu pridėta į `dashboard/db.py` per `CREATE TABLE IF NOT EXISTS`
+- `src/enrichment/` modulis (5 failai): `filters.py`, `scoring.py`, `budget.py`, `enrich_places.py`, `__init__.py`
+- Quality gates:
+  - Pre-Stage A: industry whitelist (19), gst_status='ACT' (NE 'Active' — ABR abbreviation), valid 4-digit AU postcode, NOT trustee, NOT enriched
+  - Pre-Stage B: website_url + NOT free-tier hosting (wix/squarespace/wordpress.com/etc, 13 patterns) + NOT facebook/instagram as website
+  - Pre-Stage C: A+B contact channels TUŠTI + priority_score ≥ 50 (cost gate)
+- Priority scoring: 0-100 pts pagal industry (0-40, legal/accounting 40, healthcare 38), state (0-30, NSW 30, VIC 28), name quality (0-20), GST Active (0-10)
+- Budget guards: PLACES_MONTHLY_CAP_USD=50 default + can_spend() pre-flight check
+- 86,017 lead'ų eligible Stage A iš 159,070 (54% pass quality gates)
+
+**GCP setup (vartotojo darbas):**
+- Vartotojas užregistravo Google Cloud project → enable'ino Places API (New) → priėmė EEA Terms of Service → sukūrė API key (AIza...) → įdėjo į `.env`
+- Google free trial: €256.52 credit + 90 dienų (3× standartinį $300/90d) — pakankamai pilnam mass run'ui
+- API valid + Places API live test su "Bunnings Sydney" → HTTP 200, Bunnings Alexandria adresas + phone + website
+
+**Live smoke #1 — 100 leads (7.7s, $0 real cost):**
+- Hit rate: **56%** (56/100 OK)
+- Su phone: 53%, su website: 43%, su trading_name: 61%
+- 0 errors
+- Real lead'ai (manual spot-check): BIOART DENTAL VIC, AMM DENTAL CLINIC VIC, JUST ELECTRICAL SYDNEY, SG MCLEAN PLUMBING
+
+**Live smoke #2 — 1000 leads (90s, $0 real cost):**
+- Hit rate: **44.2%** (442/1000 OK) — žemiau už 100-batch dėl diversity'o didesnio sample'e
+- 526 not_found (51%) — sole trader'iai be Google My Business profile'io
+- 32 errors (3.2%) — trumpas rate-limit pause vidury batch'o, auto-resume
+- Cost: $35 nominal'iai, **$0 real** (telpa į 1k Enterprise SKU free monthly tier'į)
+
+**Sumarinis state po 1100 leads:**
+- 498/1100 OK (45%) → 465 su phone, 390 su website, 503 su trading_name
+- **365 leads eligible Stage B** (turi website, ne FB-as-website, ne free-tier)
+- 133 leads su website BUT facebook.com URL ar free-tier hosting → tiesiai į Stage C
+- 32 leads su error status → retry sesijoje #8 (TBD)
+
+**Memory updates:**
+- `places_api.md` — endpoint specs (jau buvo iš sesijos #6)
+- `waterfall_architecture.md` — naujas memory, pilna 3-stage architektūra + quality gates + scoring + budget
+- `MEMORY.md` indeksas atnaujintas
+
+### Kas liko / nepatvirtinta
+
+- **Stage B kodas neegzistuoja** — `enrich_website.py` paruoštas tik specifikacijoj DECISION_LOG'e. Sesija #8 darbas.
+- **Stage C kodas neegzistuoja** — `enrich_socials.py` (SerpAPI) paruoštas tik specifikacijoj. Sesija #9 darbas.
+- **Orchestrator (`run_enrichment.py`)** — paruoštas specifikacijoj. Sesija #10.
+- **Pilnas 86k mass run NEpaleistas** — laukia, kol Stage B/C bus baigtos, kad single-pass pipeline ekonomiškai veiktų
+- **32 errors retry** — `--retry-errors` flag'as enrich_places.py — pending sesija #8
+- **65/86k eligible Stage A nepaliesti** — 1100 ėmime tik 1.3% scope'o. Tikras coverage'o test'as ant 5k+ būtų autoritetingesnis baseline.
+- **Email outreach setup** — net jei gauname email'us iš Stage B, vis dar reikia: Gmail SMTP setup, deliverability warmup, ZeroBounce verification ($65 už 10k jei bounce rate >2%)
+- **Manual outreach BE Stage B** — vartotojas gali jau dabar paimti 498 enriched lead'us su phone iš outreach.db ir skambinti. Skambučio script'as nepasiruoštas.
+
+### Kitas žingsnis
+
+**SESIJA #8 — Stage B (website scraper):**
+1. Sukurti `src/enrichment/enrich_website.py` — async httpx + BeautifulSoup4
+2. Foreach lead su `website_url`: GET homepage + /contact + /about + footer
+3. Extract: email (mailto:, regex), FB URL (a[href*="facebook.com"]), IG URL, LinkedIn
+4. UPDATE enrichment table su contact_email, scraped_fb_url, scraped_ig_url, linkedin_url
+5. Politeness: 2s per-domain delay, robots.txt compliance, concurrency=10
+6. Smoke ant 365 eligible (~7 min ETA), tikėtinas hit rate 50-70%
+
+**SESIJA #9 — Stage C (SerpAPI):**
+1. Vartotojas užregistruos SerpAPI account (FREE 100 searches/mėn, žiūr https://serpapi.com)
+2. Sukurti `src/enrichment/enrich_socials.py` — Google search via SerpAPI
+3. Foreach top-priority lead be jokio kontakto: query "<trading_name> <state> facebook OR instagram"
+4. UPDATE enrichment.scraped_fb_url + scraped_ig_url
+5. Cap 5k calls = $25 cost
+
+**SESIJA #10 — Orchestrator:**
+1. Sukurti `src/enrichment/run_enrichment.py` — vienas CLI, `--stage all` paleidžia A→B→C iš eilės
+2. Dashboard view: `dashboard/queries.py` papildomas enrichment funnel
+3. End-to-end test ant 1000 leads
+4. Decision dėl pilno 86k mass run
+
+## Istorija
+
+| Data | Trukmė | Self-score | Pabaigtumas | Santrauka |
+|---|---|---|---|---|
+| 2026-05-26 #7 | ~5h | 9/10 | 80% | Waterfall architecture + Stage A LIVE (1100 leads, 45% hit, $0 real cost). 365 ready Stage B. Solution architect + agent reality checks šaltinių kombinacija. Production-ready Stage A. |
+| 2026-05-25 #6 | ~2h | 7/10 | 74% | Plan A→B pivot mid-session. enrich_abr.py sukurtas tada ištrintas. Places API research baigtas ($35/1k Enterprise, 1k free/mėn). Memory init pilnas. Code laukia dashboard/ push'o. |
 
 ### Ką padarėme (sesijos #6 antra pusė)
 
