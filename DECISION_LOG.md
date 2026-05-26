@@ -4,6 +4,113 @@ Architektūriniai sprendimai. Naujausi viršuje.
 
 ---
 
+## 2026-05-26 (sesija #8 end) — V2-LITE strategy: pain signals > perfect pipeline
+
+**Sprendimas:** Atmesti pilną Pipeline V2 (full multi-agent, Lighthouse, competitor analysis, tech stack detection). Eiti V2-LITE keliu — minimal patobulinimai esamame pipeline'e, kad galima būtų generuoti pirmus pinigus per 2-3 sesijas.
+
+**Konteksto šaltinis:**
+
+Vartotojas pateikė detailed lead-gen expertise feedback (vertinimas 9/10):
+
+1. `has_domain=0` filter'as yra binary — reality yra 4-lygis (no website / social only / dead / modern)
+2. Dead website detection = aukso market'as (verslas su 2017 WordPress + broken mobile = LENGVIAU parduoti nei be jokio website'o, nes jau yra "buyer" psichologij)
+3. PAIN SIGNALS > CONTACT INFO (review_count, rating, tech stack, mobile score)
+4. AU validation būtina (PROXYTECH symptom — Google grąžino Kanados verslą)
+5. Tech stack detection (Wix/Weebly/old WP = clear automation upsell)
+6. Social presence finder verslams be svetainės
+7. Sales angle generator (Claude personalized) keičia reply rate 5-10×
+
+**V2-LITE scope:**
+
+✅ **Palikti** esamus failus (Stage A + B + export_outreach.py + 470 leads outreach.db'e)
+
+✅ **P0 sesija #9 (3-4h):**
+- Places rating + review_count fields (30 min)
+- AU validation post-Stage A (30 min)
+- Website classifier 0-3 lygiai (2-3h)
+
+⏰ **P1 sesija #10:**
+- Sales angle generator (Claude Haiku, $0.50/500 leads)
+- Suburb tier 1-4 (200 hardcoded AU suburbs)
+- Bare-bones pre-flight check filter
+
+🚫 **NEDAROM (V3 backlog):**
+- Full Lighthouse / PageSpeed Insights
+- Tech stack detection (Wappalyzer)
+- Competitor analysis (top 10 per lead)
+- Multi-location dedupe
+- Trading age (ABR Lookup API)
+- Full multi-agent orchestration
+
+**Priežastys, kodėl V2-LITE virš full V2:**
+
+1. **Validation prieš investiciją** — V2-LITE su 5h darbo duos pakankamai signal'o, ar AU SMB cold outreach veikia su Empirra brand'u. Full V2 kainuotų 20-30h darbo prieš pirmą reply'ą.
+
+2. **Cost economics aiškūs** — esamas pipeline kainuoja $0 real, V2-LITE pridžia $0.50 (Claude Haiku). Full V2 kainuotų $50-100/mėn (PageSpeed API quota, Apify, SerpAPI per scale).
+
+3. **Vartotojas reikalauja pirmų pinigų** — sąžiningas signal'as. 0 revenue dabar = strategy yra prieš tobulinim, ne tobulinimas prieš strategiją.
+
+4. **Iteratyvus learning** — V2-LITE duos data points (kurie scoring features pakeičia reply rate). Tada decide, ar pridėti P2-P3 (Apify, mass run, etc.).
+
+**Konkretūs P0 implementaciniai sprendimai:**
+
+**P0.1 Places rating + review_count:**
+- Atnaujint Field Mask: `places.userRatingCount`, `places.rating`, `places.businessStatus`, `places.priceLevel`
+- DB schema (saugu, `ALTER TABLE ... ADD COLUMN`): `review_count INT, rating REAL, business_status TEXT, price_level INT`
+- Re-process 498 OK leads ($0 cost — tas pats Enterprise SKU tier'as, nereikia mokėti per call again)
+
+**P0.2 AU validation:**
+- Naujas `src/enrichment/validators.py` modulis (~50 line'ų)
+- Foreach lead post-Stage A:
+  - `phone.startswith('+61')` jei NE → flag not_au
+  - website TLD in (`.au`, `.com.au`, `.org.au`) jei NE → flag not_au
+  - address turi AU state code (NSW/VIC/QLD/...) jei NE → flag not_au
+- Jei not_au → `stage_a_status='not_au'`, skip Stage B
+- Naujas DB stulpelis: `au_confidence INT` (0-3 — kiek signal'ų match'inosi)
+
+**P0.3 Website classifier:**
+- Naujas `src/enrichment/website_classifier.py` modulis (~200 line'ų)
+- HTTP HEAD + GET homepage parsing:
+  - SSL? (HTTPS available?)
+  - viewport meta tag? (mobile-friendly signal)
+  - `<meta generator>` content (WordPress 4.5, Wix, Squarespace, etc.)
+  - Footer year regex (`© 2017-2022`)
+  - Response time <3s?
+- Class 0: no website (esamas state)
+- Class 1: social only (FB/IG/linktr.ee/wixsite as website)
+- Class 2: real website BUT dead (SSL=false OR no viewport OR footer year <2022 OR framework outdated)
+- Class 3: modern website (HTTPS + viewport + modern framework + footer year >=2023)
+
+**Verifikacija (sesija #9 DoD):**
+
+- 470 leads turi naujus stulpelius su realiomis reikšmėmis
+- Top 50 "gold leads" CSV per nauja scoring formulę:
+  ```
+  score = (40 if no_website else 0)
+        + (35 if website_class <= 2 else 0)
+        + (25 if review_count >= 20 else 0)
+        + (15 if rating >= 4.5 else 0)
+        + (10 if entity_type == 'PTY LTD' else 0)
+        + (40 if mobile_broken else 0)
+  ```
+- Spot-check 10 random "top 50" leads — patvirtinam, kad jie atrodo kaip realūs Empirra ICP fit
+
+**Trade-off'ai (žinomi):**
+
+- **Apify FB scraper deferred** — 108 leads be svetainės "išmesti" iki P2. Acceptable nes top priority dabar ne coverage, o conversion'as.
+- **PageSpeed API skip** — naudosim cheap heuristics. 95% accuracy už 1% cost'o.
+- **Mass run 84k atidėtas** iki P0+P1 patvirtins veikimą su 470 leads.
+- **Heavy AI enrichment skip** — tik Claude Haiku sales angle generator (sesija #10).
+
+**Operacinis impact:**
+
+- PROJECT_STATUS pabaigtumas: 85% (pridėta planned P0 darbai)
+- Memory `v2_lite_strategy.md` — naujas, fiksuoja V2-LITE scope + priority sorting
+- DECISION_LOG įrašas šitas
+- Sesijos #8 darbas commit'intas, sesija #9 startuos su clean state
+
+---
+
 ## 2026-05-26 (sesija #8) — Stage B LIVE smoke: 365 websites, 61% hit rate, $0 cost
 
 **Sprendimas:** Stage B (website scraper) production-ready ant 365 lead'ų. Email/FB/IG extract'oriai veikia, robots.txt + politeness saugu. Pereinam į Stage C (SerpAPI) sesijoje #9.

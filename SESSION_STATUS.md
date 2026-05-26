@@ -1,6 +1,118 @@
 # SESSION_STATUS
 
-## Paskutinė sesija: 2026-05-26 (sesija #7 — Waterfall architecture + Stage A LIVE: 1100 leads, 45% hit rate, $0 real cost)
+## Paskutinė sesija: 2026-05-26 (sesija #8 — Stage B LIVE 365 svetainių + export_outreach.py + V2-LITE strategy decision)
+
+### Ką padarėme
+
+**Stage B — Website scraper LIVE (src/enrichment/enrich_website.py):**
+- async httpx + BeautifulSoup4 (jau įdiegta v4.14.3)
+- 4 page'ų strategija: homepage + /contact + /contact-us + /about
+- Email extraction: mailto: links (priority) + plain-text regex + false positive filtras
+- Social URLs: <a href> selectors + plain-text fallback (FB, IG, LinkedIn)
+- robots.txt cache per host, per-domain 2s rate limiter, User-Agent transparent
+- Concurrency 10, timeout 10s, MAX_BYTES 500KB safety
+
+**Stage B LIVE smoke ant 365 lead'ų (6.5 min, $0 cost):**
+- 221 OK (61%), 141 no_data (38%), 0 errors
+- 181 emails (49%), 155 FB URLs (42%), 106 IG (29%), 32 LinkedIn (8%)
+
+**Cumulative state po sesijų #7+#8:**
+- 1105 lead'ai Stage A processed (498 OK = 45%)
+- 365 lead'ai Stage B processed (221 OK = 61%)
+- 470 lead'ai su BENT VIENU kontaktu
+  - 465 phone, 180 email, 157 FB, 108 IG, 390 website
+- 116 lead'ai su VISAIS 3 channels (email + phone + FB)
+- 28 lead'ai eligible Stage C (priority ≥ 50, be jokio kontakto)
+- 84,912 lead'ai NEpaskanuoti (likę Stage A eligible)
+
+**export_outreach.py — CSV generation tool:**
+- Paima top-priority enriched leads (--limit N --min-score X --channel any|email|phone|fb)
+- Generuoja paste-ready CSV su email_subject + email_body + dm_message templates
+- Adaptyvus pagal website status (turi vs neturi):
+  - TURI website: AI tools $200-500/mo offer
+  - NETURI: $500 vienkartinis svetainės setup
+- Mark exported į outreach.db (idempotent)
+
+**Bug fixes (sesijos eigoje):**
+1. `_mark_exported` updated_at NOT NULL violation — fix UPDATE first then INSERT
+2. Email body "noticed you don't have a website" net jei turi — fix adaptyvus opening
+3. Industry hook syntax "with your practice" — fix "like yours in {natural noun}"
+4. [DRY] placeholder cleanup iš pirmo dry-run testo
+
+**CSV exports (output/):**
+- outreach_ready_20260526_1403.csv (10 leads, su placeholder bug'u)
+- outreach_ready_20260526_1405.csv (10 leads, gera data)
+- outreach_ready_20260526_1821.csv (10 leads, fix'inta email logika)
+- outreach_ready_20260526_1829.csv (470 leads, pilnas export'as)
+
+**V2-LITE strategijos sprendimas (sesijos pabaigoje):**
+
+Vartotojas pateikė detalų pasisakymą apie pipeline limit'us su 7 kritikomis (vertinimas 9/10):
+1. has_domain=0 yra MELAS — reality 4 website lygiai (no/social-only/dead/modern)
+2. Dead website detection = aukso market'as
+3. PAIN SIGNALS > CONTACT INFO (reviews + rating + tech stack)
+4. AU validation būtina (PROXYTECH bug = symptom)
+5. Tech stack detection (Wix/Weebly/old WP)
+6. Social presence finder verslams be svetainės
+7. Sales angle generator (Claude Haiku personalized emails)
+
+**Sprendimas:** V2-LITE (NE pilnas V2):
+- Palikti esamus failus (NE delete'inti)
+- Tikslas: PIRMI PINIGAI > perfect pipeline
+- P0 (kita sesija): rating fields + AU validation + website classifier
+- P1 (sesija po): sales angle generator + suburb tier
+- P2-P3 (vėliau): mass run, Apify FB, competitor analysis
+
+### Kas liko / nepatvirtinta
+
+- **P0 darbai NEpadaryti** (atidėta sesijai #9):
+  1. Places `userRatingCount + rating` field'ų pridėjimas (30 min)
+  2. AU validation post-Stage A (anti-PROXYTECH, 30 min)
+  3. Website classifier 0-3 lygiai (2-3h)
+- **Vartotojas dar nesiunti email'ų rankomis** — turi 470 leads outreach_ready_20260526_1829.csv, bet rankinis warmup nepradėtas
+- **Gmail paskyra naujam outreach'ui nesukurta** (vartotojo darbas, 5 min)
+- **Mass run NEpaleistas** ant likę 84,912 eligible
+- **PROXYTECH-like false positives** outreach.db'e — nepatikrinta kiek (1 aptiktas iš 470)
+
+### Kitas žingsnis (sesija #9 — V2-LITE P0)
+
+**3 darbai (3-4h):**
+
+1. **P0.1 (30 min):** Atnaujint `src/enrichment/enrich_places.py` Field Mask:
+   - Pridėti: `places.userRatingCount`, `places.rating`, `places.businessStatus`, `places.priceLevel`
+   - DB schema: ALTER TABLE enrichment ADD COLUMN review_count INT, rating REAL, business_status TEXT, price_level INT
+   - Re-process esamus 498 OK leads ($0 cost — tas pats Enterprise SKU tier'as)
+
+2. **P0.2 (30 min):** AU validation post-Stage A:
+   - Naujas modulis `src/enrichment/validators.py`
+   - Foreach lead post-Stage A: tikrint phone +61 + website TLD .au + address AU state code
+   - Jei FAIL — mark `stage_a_status='not_au'`, skip Stage B
+
+3. **P0.3 (2-3h):** Website classifier 0-3:
+   - Naujas modulis `src/enrichment/website_classifier.py`
+   - HTTP HEAD + HTML parse: SSL, viewport tag, framework (meta generator), footer year, response time
+   - DB schema: ALTER TABLE enrichment ADD COLUMN website_class INT, mobile_friendly INT, tech_stack TEXT
+   - Classify 390 leads su website
+
+**Sesijos #9 DoD:**
+- 470 leads turi naujus stulpelius (rating, review_count, website_class)
+- Nauja priority scoring formulė pagal V2-LITE logiką
+- Top 50 "gold leads" CSV export'as su pain-signal-based ranking'u
+
+### Carry-overs
+
+- Vartotojo manual outreach (10 email'ai per pirmas 2 sav.) — nepradėta
+- Gmail outreach paskyra — nesukurta
+- Apify FB lookup leads be svetainės (~108 leads) — atidėta P2
+- Mass run 84k — atidėta P3 (po V2-LITE patvirtina)
+
+## Istorija
+
+| Data | Trukmė | Self-score | Pabaigtumas | Santrauka |
+|---|---|---|---|---|
+| 2026-05-26 #8 | ~5h | 8/10 | 85% | Stage B LIVE 365 svetainių (61% hit, 0 errors). export_outreach.py + 4 CSV exports. V2-LITE strategy sprendimas. P0 atidėtas sesijai #9. |
+| 2026-05-26 #7 | ~5h | 9/10 | 80% | Waterfall architecture + Stage A LIVE (1100 leads, 45% hit, $0 real cost). 365 ready Stage B. Solution architect + agent reality checks šaltinių kombinacija. Production-ready Stage A. |
+| 2026-05-25 #6 | ~2h | 7/10 | 74% | Plan A→B pivot mid-session. enrich_abr.py sukurtas tada ištrintas. Places API research baigtas ($35/1k Enterprise, 1k free/mėn). Memory init pilnas. Code laukia dashboard/ push'o. |
 
 ### Ką padarėme
 

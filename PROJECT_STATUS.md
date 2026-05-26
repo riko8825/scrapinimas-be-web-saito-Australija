@@ -1,7 +1,7 @@
 # PROJECT_STATUS — ABR Outreach Pipeline
 
-**Last updated:** 2026-05-26 (sesija #7 — Waterfall + Stage A LIVE)
-**Phase:** Phase 7 real-data validation — parser + DNS DONE, **Stage A LIVE smoke 1100 leads** (45% hit rate, $0 real cost). 365 leads ready Stage B. Stage B/C code pending. + Phase 9 Dashboard.
+**Last updated:** 2026-05-26 (sesija #8 — Stage B LIVE + export_outreach + V2-LITE strategy)
+**Phase:** Phase 7 real-data validation — parser + DNS DONE, **Stage A + B LIVE smoke** (1105 + 365 leads). 470 leads su contacts ready outreach'ui. V2-LITE patobulinimai (rating, AU validation, website classifier) atidėti sesijai #9.
 
 ## Tikslas
 
