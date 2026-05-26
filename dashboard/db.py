@@ -96,6 +96,57 @@ CREATE TABLE IF NOT EXISTS imports (
     rows_updated  INTEGER,
     status        TEXT NOT NULL DEFAULT 'running'   -- running | ok | failed
 );
+
+-- Waterfall enrichment state (Plan A=Places, B=Website, C=Socials).
+-- Separate table to keep `leads` schema stable + allow easy DROP if smoke fails.
+CREATE TABLE IF NOT EXISTS enrichment (
+    abn                     TEXT PRIMARY KEY REFERENCES leads(abn) ON DELETE CASCADE,
+    -- Stage A: Google Places API
+    stage_a_status          TEXT,        -- pending | ok | not_found | error | skipped
+    stage_a_attempted_at    TEXT,
+    stage_a_cost_usd        REAL NOT NULL DEFAULT 0,
+    place_id                TEXT,
+    trading_name            TEXT,
+    formatted_address       TEXT,
+    phone                   TEXT,
+    website_url             TEXT,
+    place_types             TEXT,        -- JSON array
+    -- Stage B: Website scraper
+    stage_b_status          TEXT,        -- pending | ok | blocked | no_data | error | skipped
+    stage_b_attempted_at    TEXT,
+    contact_email           TEXT,
+    scraped_fb_url          TEXT,
+    scraped_ig_url          TEXT,
+    linkedin_url            TEXT,
+    -- Stage C: Socials lookup (SerpAPI)
+    stage_c_status          TEXT,        -- pending | ok | not_found | error | skipped
+    stage_c_attempted_at    TEXT,
+    stage_c_cost_usd        REAL NOT NULL DEFAULT 0,
+    -- Scoring + audit
+    priority_score          INTEGER,
+    updated_at              TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_enrich_stage_a    ON enrichment(stage_a_status);
+CREATE INDEX IF NOT EXISTS idx_enrich_stage_b    ON enrichment(stage_b_status);
+CREATE INDEX IF NOT EXISTS idx_enrich_stage_c    ON enrichment(stage_c_status);
+CREATE INDEX IF NOT EXISTS idx_enrich_priority   ON enrichment(priority_score DESC);
+CREATE INDEX IF NOT EXISTS idx_enrich_place_id   ON enrichment(place_id);
+
+-- Per-run audit log (cost tracking, budget caps).
+CREATE TABLE IF NOT EXISTS enrichment_runs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    stage           TEXT NOT NULL,           -- a | b | c
+    started_at      TEXT NOT NULL,
+    finished_at     TEXT,
+    count_attempted INTEGER NOT NULL DEFAULT 0,
+    count_ok        INTEGER NOT NULL DEFAULT 0,
+    count_error     INTEGER NOT NULL DEFAULT 0,
+    cost_usd        REAL NOT NULL DEFAULT 0,
+    status          TEXT NOT NULL DEFAULT 'running'   -- running | ok | failed
+);
+
+CREATE INDEX IF NOT EXISTS idx_runs_stage ON enrichment_runs(stage, started_at DESC);
 """
 
 VALID_STATUSES = (

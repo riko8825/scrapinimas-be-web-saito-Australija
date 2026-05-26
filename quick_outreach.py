@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import re
 import sqlite3
 import sys
 import urllib.parse
@@ -65,30 +66,77 @@ DEFAULT_INDUSTRIES = [
 DEFAULT_STATES = ["NSW", "VIC", "QLD"]
 
 
-def _build_fb_search_url(business_name: str, state: str, postcode: str) -> str:
-    """Sukurk DuckDuckGo search URL su FB filtru — rankinė paieška vienu klik'u.
+# Legal suffixes, kurie niekada nebūna FB brand name'e
+_LEGAL_NOISE = re.compile(
+    r"\b(pty\s*\.?\s*ltd\.?|proprietary\s+limited|pty\s*\.?|ltd\.?|"
+    r"limited|inc\.?|incorporated|the\s+trustee\s+for|"
+    r"the\s+trustee\s+of|t/a|trading\s+as)\b",
+    re.IGNORECASE,
+)
+_PARENS = re.compile(r"\s*\([^)]*\)\s*")
+_PUNCT = re.compile(r"[.,;:!?\"\\/]")
+_MULTI_SPACE = re.compile(r"\s+")
 
-    DuckDuckGo nepalaiko rate-limit'o nei CAPTCHA, todėl saugu naudoti
-    rankinei navigacijai. Format'as: \"<name>\" <postcode> site:facebook.com
+
+_ACRONYM_GAP = re.compile(r"(?<=\b[A-Z])\s+(?=[A-Z]\b)")
+
+
+def _clean_business_name(name: str) -> str:
+    """Pavalyk ABR legal name į FB-friendly brand name.
+
+    Pavyzdžiai:
+      'A.R.S. CLEANING GROUP PTY. LTD.' → 'ARS Cleaning Group'
+      'NEWCASTLE & LAKE MACQUARIE ELECTRICAL & MAINTENANCE SERVICES PTY LTD'
+        → 'Newcastle and Lake Macquarie Electrical and Maintenance Services'
+      'THE TRUSTEE FOR SMITH FAMILY TRUST' → 'Smith Family Trust'
     """
-    query = f'"{business_name}" {postcode} site:facebook.com'
-    return f"https://duckduckgo.com/?q={urllib.parse.quote_plus(query)}"
+    s = name or ""
+    s = _PARENS.sub(" ", s)        # pašalink (NSW), (2290), etc.
+    s = _LEGAL_NOISE.sub(" ", s)   # pašalink pty ltd / trustee / etc.
+    s = s.replace("&", " and ")    # & netaikomas Google query
+    s = _PUNCT.sub(" ", s)         # pašalink taškus + kabučius
+    s = _MULTI_SPACE.sub(" ", s).strip()
+    # Sujungiam vienraidžius akronimus: "A R S" → "ARS"
+    while _ACRONYM_GAP.search(s):
+        s = _ACRONYM_GAP.sub("", s)
+    return s.title()
 
 
-def _build_google_search_url(business_name: str, postcode: str) -> str:
-    """Fallback Google paieška jei DuckDuckGo neranda. Google rezultatuose
-    žmogus dažnai randa FB greičiau. Atsargiai — rate-limit'inasi po 20 query.
+def _build_google_fb_url(clean_name: str, postcode: str) -> str:
+    """Google paieška su site:facebook.com filtru — geriausias variantas.
+
+    Google indeksuoja FB puslapius daug giliau nei DDG. Neuždeda quote'ų
+    aplink pavadinimą (per griežta) — tiesiog pateikia žodžius + postcode.
     """
-    query = f'"{business_name}" {postcode} facebook'
+    query = f"{clean_name} {postcode} site:facebook.com"
     return f"https://www.google.com/search?q={urllib.parse.quote_plus(query)}"
 
 
-def _build_dm_template(business_name: str, industry: str) -> str:
-    """Personalizuotas FB DM template'as. Tu PRIVALAI personalizuoti
-    {{LIKE_THIS}} placeholder'ius prieš siunčiant — kitaip tai spam'as.
+def _build_google_general_url(clean_name: str, postcode: str) -> str:
+    """Google bendra paieška (website, FB, IG, Google Maps) viename.
 
-    Logika: angliškai (AU rinka), trumpa (mobile-first), value-first
-    (siūlo problemą + sprendimą), low-commitment CTA (free chat).
+    Naudinga kai FB neturi, BET verslo turi website / IG / Google Business.
+    Operatorius vienu žvilgsniu mato visus channels.
+    """
+    query = f"{clean_name} {postcode} australia"
+    return f"https://www.google.com/search?q={urllib.parse.quote_plus(query)}"
+
+
+def _build_fb_native_url(clean_name: str) -> str:
+    """Facebook native page search — atidaro FB su login + paieška.
+
+    Jei operatorius jau login'intas FB Empirra Page'oje, tai
+    greičiausias kelias. Be login'o — peradresuoja į FB log in.
+    """
+    query = clean_name
+    return f"https://www.facebook.com/search/pages/?q={urllib.parse.quote_plus(query)}"
+
+
+def _build_dm_template(clean_name: str, industry: str) -> str:
+    """Personalizuotas FB DM template'as su jau pavalytu pavadinimu.
+
+    clean_name jau be Pty Ltd / & / taškų, Title Case (pvz. "Ars Cleaning Group").
+    Tu PRIVALAI personalizuoti {{ADD_1_DETAIL_FROM_FB_PAGE}} prieš siunčiant.
     """
     industry_hook = {
         "electrical": "electrical work",
@@ -102,7 +150,7 @@ def _build_dm_template(business_name: str, industry: str) -> str:
     }.get(industry, "your services")
 
     return (
-        f"Hi {business_name.title()},\n\n"
+        f"Hi {clean_name} team,\n\n"
         f"I noticed you do {industry_hook} but don't have a website yet — "
         f"{{{{ADD_1_DETAIL_FROM_FB_PAGE}}}} caught my eye.\n\n"
         f"I help small AU businesses like yours get a clean, "
@@ -239,20 +287,23 @@ def main(argv: list[str] | None = None) -> int:
 
     rows = []
     for lead in leads:
+        raw_name = lead["business_name"]
+        clean_name = _clean_business_name(raw_name)
         rows.append({
             "abn": lead["abn"],
-            "business_name": lead["business_name"],
+            "business_name": raw_name,
+            "clean_name": clean_name,   # FB-friendly versija DM'ui
             "industry": lead["industry_keyword"],
             "state": lead["state"],
             "postcode": lead["postcode"],
-            "fb_search_url": _build_fb_search_url(
-                lead["business_name"], lead["state"], lead["postcode"]
+            # 3 paieškos link'ai geriausi → atsarginiai
+            "google_fb_url": _build_google_fb_url(clean_name, lead["postcode"]),
+            "google_general_url": _build_google_general_url(
+                clean_name, lead["postcode"]
             ),
-            "google_search_url": _build_google_search_url(
-                lead["business_name"], lead["postcode"]
-            ),
+            "fb_native_url": _build_fb_native_url(clean_name),
             "dm_message": _build_dm_template(
-                lead["business_name"], lead["industry_keyword"] or "your industry"
+                clean_name, lead["industry_keyword"] or "your industry"
             ),
             "fb_url_found": "",  # rankiniu užpildysi po paieškos
             "sent": "",          # rankiniu žymėk "yes" po DM siuntimo

@@ -4,6 +4,107 @@ Architektūriniai sprendimai. Naujausi viršuje.
 
 ---
 
+## 2026-05-26 (sesija #7) — Waterfall enrichment architecture: A + B + C + quality gates
+
+**Sprendimas:** Sukurta 3-stage waterfall enrichment architektūra su quality gate'ais prieš kiekvieną stage'ą. Pirma sesija — Stage A (Google Places) code-ready, smoke laukia vartotojo GCP setup'o.
+
+**Stage'ų rolės:**
+
+- **Stage A (Google Places API):** trading_name + phone + website_url + place_id + address. Cost: $0-35 (1k free/mėn Enterprise SKU). Vykdoma plačiai (86k eligible iš 159k po filtrų).
+- **Stage B (Website scraper, Python):** email + FB + IG + LinkedIn iš svetainės. Cost: $0. Vykdoma TIK lead'ams iš Stage A, kurie turi `website_url` ir NĖRA free-tier hosting (wix/squarespace/blogspot).
+- **Stage C (SerpAPI):** FB/IG paieška lead'ams, kurie po A+B vis dar be jokio kontakto. Cost: $25 už 5k. Vykdoma SELEKTYVIAI — tik top 5k highest-priority leads pagal `priority_score >= 50`.
+
+**Quality gates (filters.py):**
+
+PRE-STAGE A:
+- `industry_keyword IN whitelist` (19 service-business industries, NULL = skip)
+- `has_domain = 0` (be svetainės — ICP)
+- `gst_status = 'ACT'` (gyvas verslas — ABR uses 'ACT' abbreviation, ne 'Active')
+- `postcode GLOB '[0-9][0-9][0-9][0-9]'` + RANGE 1000-9999 (valid AU)
+- `business_name NOT LIKE '%TRUSTEE FOR%'` (trust struktūros = ne operatoriai)
+- `enrichment.stage_a_status IS NULL` (idempotent — nerunintas)
+
+PRE-STAGE B:
+- `stage_a_status = 'ok'` + `website_url NOT NULL`
+- NOT free-tier hosting (`wixsite.com`, `squarespace-website.com`, `weebly.com`, `business.site`, `wordpress.com`, etc. — 13 patterns)
+- NOT facebook.com / instagram.com as "website" (low intent)
+- `contact_email IS NULL` (dar neturim email)
+
+PRE-STAGE C (brangiausias, selektyvus):
+- Visi A+B contact channels TUŠTI (email + phone + fb + ig)
+- `priority_score >= 50` (cost gate)
+
+**Priority scoring (scoring.py):** 0-100 pts pagal industry (0-40), state (0-30), name quality (0-20), GST active (0-10). High-scoring industries: legal/accounting (40), healthcare (38), real_estate (35), automotive (32). Top states: NSW (30), VIC (28), QLD (25).
+
+**Budget guards (budget.py):**
+- `PLACES_MONTHLY_CAP_USD=50` default — hard stop prieš API call jei month-to-date spend + estimate > cap
+- `enrichment_runs` lentelė track'ina kiekvieną batch'ą su cost_usd
+- Pre-flight `can_spend()` patikrina prieš batch'ą paleidžiant
+
+**Schema migracija (saugi):**
+- Nauja `enrichment` lentelė (NE ALTER `leads`) — atskira, lengva DROP smoke nepavykus
+- Nauja `enrichment_runs` audit lentelė (cost tracking)
+- 5 indeksai per stage statuses + priority + place_id
+- `CREATE TABLE IF NOT EXISTS` — zero risk pakartotiniam paleidimui
+
+**Eligibility statistika** (per sesijos #7 sanity test live outreach.db ant 159k):
+- Total leads: 159,070
+- Stage A eligible: **86,017** (54% iš total — po visų quality gate'ų)
+- Stage B/C eligible: 0 (nesame paleidę Stage A live)
+
+**File struktūra:**
+- `src/__init__.py` + `src/enrichment/__init__.py` — package init
+- `src/enrichment/filters.py` — quality gates (eligible_for_stage_{a,b,c})
+- `src/enrichment/scoring.py` — priority_score formulė
+- `src/enrichment/budget.py` — cost cap'ai + estimate
+- `src/enrichment/enrich_places.py` — Stage A async wrapper + CLI
+- `dashboard/db.py` — schema migracija (enrichment + enrichment_runs)
+- `.env.example` — PLACES_* + SERPAPI_* + SCRAPER_* config
+
+**Priežastys pivot'inti į waterfall vs alternatyvas:**
+
+- **vs Apollo $59/mėn recurring:** Apollo AU SMB no-website segment coverage tik ~10-15%. Waterfall'as Stage A+B+C duos 60-75% (Places GBP database) per $0-40 vienkartinį smoke. Long-term cheaper jei nereikia 12k email/mėn.
+- **vs Clay $149/mėn:** Clay yra waterfall orchestration tools — mes statome tą patį vidiniu code'u už $0/mėn (tik per-API cost'ai).
+- **vs FB free-text search:** Sesija #6 sąžiningas test'as parodė 0-20% hit rate per Brave/Google/DDG/Yellow Pages. AU no-website segmente verslai under-discoverable per free channels. Places turi savo GBP database, kurio web search neturi.
+- **vs Playwright DIY:** 10-13h dev + 30-60 min/mėn maintenance + ban risk. Places yra 2h dev + 0 maintenance + 0 ban risk.
+
+**Verifikacija (per sesiją #7):**
+- Compile: 5 failai (`db.py`, `filters.py`, `scoring.py`, `budget.py`, `enrich_places.py`) — visi PASS
+- Schema migration ant live outreach.db: enrichment + enrichment_runs sukurtos, 21 + 9 stulpeliai
+- Scoring sanity: Electrical + NSW + good name + Active = 90/100 pts ✅
+- Budget sanity: $1000 calls @ $0.035 = $35, can_spend cap check works ✅
+- Filters: 86,017 eligible iš 159,070 leads (54%) ✅
+- Dry-run CLI: `py -3 -m src.enrichment.enrich_places --dry-run --limit 5` veikia, jokio live API hit ✅
+
+**Blokuoja toliau:** vartotojo GCP setup (15 min):
+1. GCP Console → New Project "empirra-au-leads"
+2. APIs & Services → Library → "Places API (New)" → Enable
+3. Credentials → Create API Key → Restrict to Places API (New) + IP allowlist (optional)
+4. Billing → Budget alerts → $50 monthly cap
+5. `GOOGLE_PLACES_API_KEY=<key>` į `.env`
+
+Po setup'o — sesija #7 antra dalis: `py -3 -m src.enrichment.enrich_places --live --limit 100` (FREE smoke, telpa į 1k free tier).
+
+**Trade-off'ai (žinomi):**
+
+- **86k eligible vs $35/1k:** pilnas mass run = $35 × 86 = ~$2,975. SMOKE 1000 leads FIRST, decide scale'ą po hit rate matavimo.
+- **Priority scoring yra heuristika, ne ML model.** Galimi neoptimalūs sprendimai (pvz., aukšta-score lead'as pasirodo bad fit). Trade-off'as priimtinas — sesijos #7 tikslas yra MVP'inis pipeline, ne ML optimization.
+- **Stage C cap 5k:** likę 81k leads (kurie po A+B vis dar be kontakto) neenrichint'inami. Jei reikia bigger scale — pakelti cap arba pereiti į Apify/Apollo paid tier'us.
+
+**Operacinis impact:**
+- PROJECT_STATUS modulis 3d "Plan B — Places enrichment" In Build (research only) → In Build (Stage A code-ready, B/C pending)
+- Memory `places_api.md` papildomas waterfall context'u + scoring methodology
+- Naujas memory `waterfall_architecture.md` — Stage'ų rolės + quality gates + cost model
+
+**Sesijos #7 antrosios dalies plan'as:**
+1. Vartotojas GCP setup (15 min, paralelinis)
+2. Live smoke 100 leads (~5 min, FREE)
+3. Spot-check 10 random results (manual sample) — accuracy check
+4. Jei 60%+ hit rate ant 100 → Stage A scale ant 1000 leads (FREE, telpa į quota)
+5. Po smoke decide: Stage B (sesija #8) ir/arba Stage C (sesija #9)
+
+---
+
 ## 2026-05-25 (sesija #6, antra pusė) — Plan A → Plan B pivot: skip ABR Lookup, jump to Google Places
 
 **Sprendimas:** Plan A (enrich_abr.py + ABR Lookup) atmesta in-flight. enrich_abr.py ištrintas, ABR_* env config pašalintas. Einam tiesiai į Plan B — Google Places API (New) Text Search v1 — kaip primary trading_name + phone + website šaltinis.
