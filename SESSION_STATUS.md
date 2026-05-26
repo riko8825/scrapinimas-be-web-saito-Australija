@@ -1,6 +1,101 @@
 # SESSION_STATUS
 
-## Paskutinė sesija: 2026-05-26 (sesija #8 — Stage B LIVE 365 svetainių + export_outreach.py + V2-LITE strategy decision)
+## Paskutinė sesija: 2026-05-26 (sesija #9 — V2-LITE P0 LIVE: migration + validators + website classifier + scoring_v2 + Top 50 gold leads)
+
+### Ką padarėme
+
+**Migration framework (NAUJA):**
+- [migrations/001_v2lite.sql](migrations/001_v2lite.sql) — 14 naujų `enrichment` stulpelių + 4 indeksai
+- [migrations/apply_migration.py](migrations/apply_migration.py) — idempotent runner (SQLite neturi `ADD COLUMN IF NOT EXISTS`, helper parsina + tikrina `PRAGMA table_info`)
+- Apply rezultatas: 18/18 schema changes applied, 0 errors
+
+**P0.1 — Places rating + reviews:**
+- [src/enrichment/enrich_places.py](src/enrichment/enrich_places.py) FIELD_MASK: pridėta `rating`, `userRatingCount`, `businessStatus`, `priceLevel`
+- `_enrich_one` extract + `_dry_run_one` + `_upsert_enrichment` (16-placeholder INSERT su naujais laukais + ON CONFLICT UPDATE)
+- PRICE_LEVEL_MAP enum → int conversion
+- **Re-process 498 OK leads SKIPPED** (vartotojo sprendimas: $0 priority, nauji laukai bus pildomi tik nauj enrichment metu)
+
+**P0.2 — AU validation (anti-PROXYTECH):**
+- [src/enrichment/validators.py](src/enrichment/validators.py) — vote-based 3-signal logika (phone +61 / website .au / address AU state)
+- 13/13 self-test cases PASS (CA/US/UK/IE/NZ etc. correctly flagged as not_au)
+- Konservatyvu by design — bent 1 NOT-AU vote → `not_au` (nepriklausomai nuo AU votes)
+- Integracija į `enrich_places.py:_enrich_one` post-fetch (rezultatas saugomas `au_validation_status` + `au_validation_reason`)
+- [src/enrichment/filters.py](src/enrichment/filters.py) `eligible_for_stage_b()` — pridėtas `au_validation_status != 'not_au'` filtras
+
+**P0.3 — Website classifier 0-3:**
+- [src/enrichment/website_classifier.py](src/enrichment/website_classifier.py) — async httpx + BeautifulSoup4, $0 cost
+- Heuristics: SSL valid + viewport meta + tech_stack detection (15 patterns) + footer year regex + TTFB
+- 4 lygiai: 0=no-site, 1=dead, 2=bad/outdated, 3=modern
+- CLI runner su --dry-run / --live / --retry-errors / --concurrency
+- 2.0s per-domain politeness, 500KB response cap, User-Agent transparent
+
+**P0.3 — Full classify 380 leads (2.5 min, $0 cost):**
+- 312 OK, 50 unreachable, 18 errors
+- Distribution: 68 dead (18%) / 99 bad (26%) / 213 modern (56%)
+- Stack distribution (class=2): 31 wordpress, 25 wix, 10 godaddysites, 2 weebly, 2 squarespace, 1 webflow
+- Footer year pavyzdžiai: 2010 (Cruise Marine Electrical), 2011 (Diligence Dental, TJT Cleaning), 2012 (Modern Group Electrical) — IDEAL Empirra ICP
+
+**V2-LITE pain-signal scoring:**
+- [src/enrichment/scoring_v2.py](src/enrichment/scoring_v2.py) — ~200pt formulė su 6 komponentais: base_icp (0-100), channel (0-40), review (0-30), business_status (-100/0), revenue_proxy (0-10), stale_website (0-40)
+- `ScoreBreakdown` dataclass — auditable reasons trail
+- NULL-safe visiems laukams (legacy data turi NULL rating/review_count)
+- 4/4 self-test cases PASS
+- **Bug fix mid-stride:** `_channel_score` double-count'ino "no website" (+40) + "outdated website" (+35) — kai `has_domain=0` (legacy ABR) bet Places rado website. Signature pakeista į `(has_domain, website_class, has_website_url)` — class'as prioritetinis, jei NULL fallback į URL existence, paskutinis fallback į ABR has_domain.
+
+**Top 50 "gold leads" CSV export:**
+- [export_gold_leads.py](export_gold_leads.py) — naujas CLI su --limit / --min-score / --require-contact / --include-closed / --include-not-au
+- 30-column CSV su pain-signal breakdown stulpeliais (channel_pts/review_pts/stale_pts/etc.) + `score_reasons` trail
+- [output/gold_leads_20260526_1945.csv](output/gold_leads_20260526_1945.csv) — Top 50 wygenerated (498 candidates → top 50)
+- Distribution: 125-149pt (47 leads), 150-174pt (3 leads)
+- Site mix: 10 no-site + 5 class-1 (dead) + 35 class-2 (outdated)
+- Contact rate: 47/50 phone, 24/50 email, 22/50 FB, 15/50 IG, 2/50 NONE
+
+**Top 5 gold leads:**
+1. DILIGENCE DENTAL SERVICES PTY LTD (QLD, godaddysites 2011) — 158pt
+2. Modern Electrical Services Pty Ltd (NSW, footer 2012, no SSL) — 155pt
+3. Skilled Electrical Services QLD (Wix 2016) — 150pt
+4. ELEMENT AUTO ELECTRICAL (godaddysites 2016) — 145pt
+5. CRUISE MARINE ELECTRICAL (godaddysites **2010** — 16 metų sena) — 145pt
+
+### Kas liko / nepatvirtinta
+
+- **`scoring_v2.py` CLOSED_PERMANENTLY edge case** — `-100 pt` + base ICP 90 + reviews 30 = 50pt, vis tiek gali patekti į top 50 jei `min-score=0`. Reikia HARD-exclude SQL prefilter'yje (jau yra `exclude_closed` flag default ON, bet penalty pernelyg švelni jei vartotojas pasinaudoja `--include-closed`).
+- **`_extract_footer_year` Wix CMS false-positive rizika** — jei legacy site embed'ina recent Wix logo "© 2025 Wix", parsim 2025 vietoj klienter tikro stale footer.
+- **`scoring_v2.py` self-test'as NE apima "no website + classifier ran later" scenario** — bug'as pirma kart išryškėjo tik ant production data, ne self-test'e.
+- **Re-process 498 OK leads NEpaleistas** — nauji rating/reviews/businessStatus/priceLevel laukai BUS pildomi tik kai nauja Stage A enrichment batch paleidžiama. Esami 498 leads turi NULL.
+- **Vartotojas dar nesiunti email'ų rankomis** — 470 + Top 50 paruošti, Gmail paskyra nesukurta
+- **Mass run NEpaleistas** ant likę 84,532 eligible (84,912 - 380 classified)
+- **Apify FB lookup verslams be svetainės** (~108 leads) — atidėta P2
+
+### Kitas žingsnis (sesija #10 — P1 + Manual Outreach Start)
+
+**P1 darbai (2-3h):**
+
+1. **Sales angle generator (Claude Haiku, $0.001/lead × 500 = $0.50):**
+   - Naujas modulis `src/enrichment/sales_angle.py`
+   - Input: trading_name, industry, reviews, rating, website_class, tech_stack, footer_year
+   - Output: 3 variants per lead — email_subject + email_body (personalized po pain signals)
+   - DB: `ALTER TABLE enrichment ADD COLUMN angle_v1 TEXT, angle_v2 TEXT, angle_v3 TEXT`
+
+2. **Suburb tier (200 hardcoded AU suburbs):**
+   - Naujas modulis `src/enrichment/suburb_tier.py`
+   - Tier 1: top 50 wealthy (Mosman, Toorak, Cottesloe...) → +5 pt scoring_v2
+   - Tier 2-4: declining
+   - Lookup `formatted_address` parse → suburb match
+
+3. **Pre-flight check filter (`export_gold_leads.py --strict`):**
+   - `(no_website OR website_class <= 2) AND (review_count >= 10 OR rating IS NULL) AND phone IS NOT NULL AND priority_score >= 100`
+   - Filtras prieš CSV export
+
+**Manual outreach pradžia (vartotojo darbas, paralelu):**
+- Gmail naujo accounto setup (5 min)
+- Pirmas batch: 5-10 email per dieną iš Top 50 CSV (rankinis warmup)
+- 2 savaičių target: 1-2 replies
+
+### Žinomi minor follow-ups
+- Atnaujinti `scoring_v2.py` self-test su "no website + classifier ran later" case
+- `_extract_footer_year`: ignore'ti footer year jei tame pačiame elemente yra "wix" / "squarespace" / "godaddy" substring (CMS, ne klientas)
+- CLOSED_PERMANENTLY hard SQL filter `export_gold_leads.py` `fetch_candidates`
 
 ### Ką padarėme
 
@@ -110,6 +205,7 @@ Vartotojas pateikė detalų pasisakymą apie pipeline limit'us su 7 kritikomis (
 
 | Data | Trukmė | Self-score | Pabaigtumas | Santrauka |
 |---|---|---|---|---|
+| 2026-05-26 #9 | ~3h | 8.5/10 | 78% | V2-LITE P0 LIVE: migration framework + 14 DB stulpelių + validators.py (13/13 tests) + website_classifier.py (380 leads, 2.5min, $0) + scoring_v2.py + Top 50 gold leads CSV. Bug mid-stride: channel_score double-count fix. CLOSED_PERMANENTLY edge case + Wix footer false-positive — atvira. |
 | 2026-05-26 #8 | ~5h | 8/10 | 85% | Stage B LIVE 365 svetainių (61% hit, 0 errors). export_outreach.py + 4 CSV exports. V2-LITE strategy sprendimas. P0 atidėtas sesijai #9. |
 | 2026-05-26 #7 | ~5h | 9/10 | 80% | Waterfall architecture + Stage A LIVE (1100 leads, 45% hit, $0 real cost). 365 ready Stage B. Solution architect + agent reality checks šaltinių kombinacija. Production-ready Stage A. |
 | 2026-05-25 #6 | ~2h | 7/10 | 74% | Plan A→B pivot mid-session. enrich_abr.py sukurtas tada ištrintas. Places API research baigtas ($35/1k Enterprise, 1k free/mėn). Memory init pilnas. Code laukia dashboard/ push'o. |

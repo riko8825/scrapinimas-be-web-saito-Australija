@@ -124,6 +124,8 @@ def eligible_for_stage_b(
       - website_url NOT facebook.com / instagram.com (ne svetainė, o social)
       - contact_email IS NULL (dar neturim email)
       - stage_b_status IS NULL ARBA 'error' (retry tik error'us)
+      - au_validation_status != 'not_au' (V2-LITE P0.2 — anti-PROXYTECH).
+        NULL ar 'unknown' praeina (legacy data + ambiguous = leidžiam).
     """
     blacklist_clauses = " AND ".join(
         "LOWER(e.website_url) NOT LIKE '%' || ? || '%'"
@@ -139,6 +141,8 @@ def eligible_for_stage_b(
           AND ({blacklist_clauses})
           AND e.contact_email IS NULL
           AND (e.stage_b_status IS NULL OR e.stage_b_status = 'error')
+          AND (e.au_validation_status IS NULL
+               OR e.au_validation_status != 'not_au')
         ORDER BY e.priority_score DESC NULLS LAST, e.updated_at DESC
         LIMIT ?
     """

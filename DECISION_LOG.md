@@ -4,6 +4,50 @@ Architektūriniai sprendimai. Naujausi viršuje.
 
 ---
 
+## 2026-05-26 (sesija #9) — V2-LITE P0: pasirinkti architektūriniai sprendimai
+
+### 1. Migration framework — atskiri SQL failai + Python idempotent runner
+
+**Sprendimas:** Sukurti `migrations/<NNN>_<name>.sql` failus + `migrations/apply_migration.py` (PRAGMA table_info pre-check), NE pridėti `ALTER TABLE` į esamą `dashboard/db.py SCHEMA_SQL`.
+
+**Atmestos alternatyvos:**
+- Pridėti ALTER bloką po CREATE TABLE į `SCHEMA_SQL` (auto-migrate per kiekvieną `init_schema()` call) — schema istorija dingsta failo viduje, ne audit-able
+- Inline ALTER kiekviename moduliuje (`enrich_places.py` pats prideda savo stulpelius) — logika išsibarsto, sunkiau debuginti
+
+**Pagrindimas:** Aiški version history (001_v2lite.sql commit'intas), idempotency built-in (PRAGMA pre-check), CLAUDE.md taisyklė "DB schema pakeitimai be migration failo NE".
+
+### 2. scoring_v2.py — NAUJAS modulis, NE keisti scoring.py
+
+**Sprendimas:** Sukurti naują `src/enrichment/scoring_v2.py` su `score_v2()` funkcija, palikti `scoring.py` `priority_score()` nepakeistą (Stage A vis dar naudoja jį per `_run_batch` UPSERT).
+
+**Pagrindimas:** scoring.py rezultatai įrašyti į `enrichment.priority_score` stulpelį 498 OK lead'ams. Keisti formulę = invalidate'inti istoriją. V2-LITE formula naudoja platesnį field set (rating, review_count, website_class, footer_year), kurio scoring.py ne mato.
+
+### 3. Re-process 498 OK leads su naujais rating laukais — SKIP
+
+**Sprendimas:** Nepaleisti re-call Places API for esamų 498 leads (kurie buvo enriched PRIEŠ FieldMask išplėtimą sesijoje #9). Nauji rating/reviewCount/businessStatus/priceLevel laukai bus pildomi TIK kai paleidžiamas naujas Stage A batch (mass run sesijoje #11+).
+
+**Atmestos alternatyvos:**
+- Re-call Text Search 498 leads ($17.43 nominal, $0 real per free trial €256) — vartotojas paspaudė "PRIORITETAS nemokamas scrapingas"
+- Switch į Place Details endpoint (pigesnis $8.70 nominal) — papildomas dev darbas ~30min, neverta dabar
+
+**Trade-off priimtas:** Top 50 gold leads CSV (esami 498) turi NULL rating → `_review_score` returns 0. Bet kiti pain signals (channel + stale_website) padengia. Top 5 leads vis tiek logiški.
+
+### 4. CLOSED_PERMANENTLY — soft penalty -100pt, NE hard SQL exclude
+
+**Sprendimas:** `_business_status_score` returns -100pt jei CLOSED_PERMANENTLY (papildoma `exclude_closed` SQL prefilter `export_gold_leads.py` default ON, bet override'inama --include-closed flag).
+
+**Žinoma problema:** base_icp 90 + reviews 30 + (-100) = 20pt — vis tiek > 0. Jei vartotojas naudoja `--include-closed --min-score 0`, CLOSED leads gali patekti į CSV. **Follow-up sesija #10:** hard exclude SQL'e + bumpinti penalty į -200.
+
+### 5. AU validation — vote-based 3-signal, NE Google formattedAddress regex only
+
+**Sprendimas:** `validators.py` paima 3 signalus (phone +61 / website .au TLD / address AU state code) ir konservatyvu logic: bent 1 NOT-AU vote → `not_au` (nepriklausomai nuo AU votes).
+
+**Pagrindimas:** PROXYTECH bug source — Kanados verslas su +1 phone bet AU postcode address (Google malformed match). 1-signal logic (tik phone) duotų false negative; 1-signal (tik address) duotų false positive. Vote-based AND konservatyvi: net 1 AU + 1 NOT-AU → not_au.
+
+**Trade-off priimtas:** Galimi false-negatives (atmestas legit AU verslas), bet false-positive cost (wasted Stage B + wasted outreach) per didelis 100k+ pool'e.
+
+---
+
 ## 2026-05-26 (sesija #8 end) — V2-LITE strategy: pain signals > perfect pipeline
 
 **Sprendimas:** Atmesti pilną Pipeline V2 (full multi-agent, Lighthouse, competitor analysis, tech stack detection). Eiti V2-LITE keliu — minimal patobulinimai esamame pipeline'e, kad galima būtų generuoti pirmus pinigus per 2-3 sesijas.

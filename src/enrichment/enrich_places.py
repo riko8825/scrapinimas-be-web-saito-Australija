@@ -47,7 +47,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from dashboard.db import connect, default_db_path, init_schema, utcnow_iso  # noqa: E402
-from src.enrichment import budget, filters, scoring  # noqa: E402
+from src.enrichment import budget, filters, scoring, validators  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -74,15 +74,31 @@ RETRY_ATTEMPTS = int(os.getenv("RETRY_ATTEMPTS", "3"))
 # saugumui — geriau pertaupyti nei ban'us gauti.
 COST_PER_CALL_USD = 0.035
 
-# Žinoma response shape (Field Mask atitinka tai, ką prašom):
+# Žinoma response shape (Field Mask atitinka tai, ką prašom).
+# V2-LITE P0.1: pridėti rating / userRatingCount / businessStatus / priceLevel
+# pain-signal scoring'ui (sesija #9). Visi šie laukai yra TAME PAČIAME Enterprise
+# SKU tier'e — papildomos kainos NĖRA.
 FIELD_MASK = (
     "places.id,"
     "places.displayName,"
     "places.formattedAddress,"
     "places.internationalPhoneNumber,"
     "places.websiteUri,"
-    "places.types"
+    "places.types,"
+    "places.rating,"
+    "places.userRatingCount,"
+    "places.businessStatus,"
+    "places.priceLevel"
 )
+
+# Google enum -> int mapping priceLevel'iui (DB int saugom):
+PRICE_LEVEL_MAP: dict[str, int] = {
+    "PRICE_LEVEL_FREE": 0,
+    "PRICE_LEVEL_INEXPENSIVE": 1,
+    "PRICE_LEVEL_MODERATE": 2,
+    "PRICE_LEVEL_EXPENSIVE": 3,
+    "PRICE_LEVEL_VERY_EXPENSIVE": 4,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +194,11 @@ async def _enrich_one(
             "phone": str | None,
             "website_url": str | None,
             "place_types": str | None,  # JSON-encoded list
+            # V2-LITE P0.1 fields:
+            "rating": float | None,
+            "review_count": int | None,
+            "business_status": str | None,   # OPERATIONAL | CLOSED_*
+            "price_level": int | None,       # 0..4 arba None
             "error_detail": str,
         }
     """
@@ -191,6 +212,12 @@ async def _enrich_one(
         "phone": None,
         "website_url": None,
         "place_types": None,
+        "rating": None,
+        "review_count": None,
+        "business_status": None,
+        "price_level": None,
+        "au_validation_status": None,
+        "au_validation_reason": None,
         "error_detail": "",
     }
 
@@ -230,6 +257,29 @@ async def _enrich_one(
     types = place.get("types") or []
     out["place_types"] = json.dumps(types) if types else None
 
+    # V2-LITE P0.1 — pain signals
+    rating = place.get("rating")
+    out["rating"] = float(rating) if isinstance(rating, (int, float)) else None
+    rc = place.get("userRatingCount")
+    out["review_count"] = int(rc) if isinstance(rc, (int, float)) else None
+    bs = place.get("businessStatus")
+    out["business_status"] = bs if isinstance(bs, str) and bs else None
+    pl_raw = place.get("priceLevel")
+    out["price_level"] = PRICE_LEVEL_MAP.get(pl_raw) if isinstance(pl_raw, str) else None
+
+    # V2-LITE P0.2 — anti-PROXYTECH AU validation
+    v = validators.validate_au(
+        phone=out["phone"],
+        website=out["website_url"],
+        formatted_address=out["formatted_address"],
+    )
+    out["au_validation_status"] = v.status
+    out["au_validation_reason"] = v.reason[:500] if v.reason else None
+    if v.status == "not_au":
+        logger.info(
+            "AU validation: not_au for %s — %s", abn, v.reason
+        )
+
     return out
 
 
@@ -249,6 +299,12 @@ def _dry_run_one(abn: str, business_name: str, postcode: str) -> dict[str, Any]:
         "phone": None,
         "website_url": None,
         "place_types": None,
+        "rating": None,
+        "review_count": None,
+        "business_status": None,
+        "price_level": None,
+        "au_validation_status": None,
+        "au_validation_reason": None,
         "error_detail": "",
     }
 
@@ -258,15 +314,21 @@ def _dry_run_one(abn: str, business_name: str, postcode: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def _upsert_enrichment(conn, result: dict[str, Any], priority: int) -> None:
-    """UPSERT enrichment row su Stage A duomenimis + priority score."""
+    """UPSERT enrichment row su Stage A duomenimis + priority score.
+
+    V2-LITE P0.1: papildomi stulpeliai rating / review_count / business_status /
+    price_level. Result dict turi turėti šiuos raktus (gali būti None).
+    """
     now = utcnow_iso()
     conn.execute(
         """INSERT INTO enrichment (
                 abn, stage_a_status, stage_a_attempted_at, stage_a_cost_usd,
                 place_id, trading_name, formatted_address, phone, website_url,
-                place_types, priority_score, updated_at
+                place_types, rating, review_count, business_status, price_level,
+                au_validation_status, au_validation_reason,
+                priority_score, updated_at
            )
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
            ON CONFLICT(abn) DO UPDATE SET
                 stage_a_status      = excluded.stage_a_status,
                 stage_a_attempted_at= excluded.stage_a_attempted_at,
@@ -277,6 +339,12 @@ def _upsert_enrichment(conn, result: dict[str, Any], priority: int) -> None:
                 phone               = excluded.phone,
                 website_url         = excluded.website_url,
                 place_types         = excluded.place_types,
+                rating              = excluded.rating,
+                review_count        = excluded.review_count,
+                business_status     = excluded.business_status,
+                price_level         = excluded.price_level,
+                au_validation_status= excluded.au_validation_status,
+                au_validation_reason= excluded.au_validation_reason,
                 priority_score      = excluded.priority_score,
                 updated_at          = excluded.updated_at""",
         (
@@ -290,6 +358,12 @@ def _upsert_enrichment(conn, result: dict[str, Any], priority: int) -> None:
             result["phone"],
             result["website_url"],
             result["place_types"],
+            result.get("rating"),
+            result.get("review_count"),
+            result.get("business_status"),
+            result.get("price_level"),
+            result.get("au_validation_status"),
+            result.get("au_validation_reason"),
             priority,
             now,
         ),
