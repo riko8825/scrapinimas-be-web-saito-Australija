@@ -18,6 +18,7 @@ from datetime import datetime
 from typing import Any
 
 from src.enrichment.scoring import priority_score as base_priority_score
+from src.enrichment.suburb_tier import tier_from_address, tier_score
 
 
 # ---------------------------------------------------------------------------
@@ -30,9 +31,10 @@ class ScoreBreakdown:
     base_icp: int = 0          # 0-100 (industry/state/name/gst — iš scoring.py)
     channel_avail: int = 0     # 0-40 (no_website / weak website)
     review_signal: int = 0     # 0-30 (review_count + rating combo)
-    business_status: int = 0   # 0/-100 (CLOSED_PERMANENTLY = exclude)
+    business_status: int = 0   # 0 / -20 / CLOSED_PERMANENTLY_PENALTY
     revenue_proxy: int = 0     # 0-10 (entity_type PTY LTD)
     stale_website: int = 0     # 0-40 (footer year / legacy stack pain)
+    suburb_tier: int = 0       # 0/3/5 (tier 2 / tier 1 wealthy suburbs)
     reasons: list[str] = field(default_factory=list)
 
     @property
@@ -44,6 +46,7 @@ class ScoreBreakdown:
             + self.business_status
             + self.revenue_proxy
             + self.stale_website
+            + self.suburb_tier
         )
 
 
@@ -125,10 +128,18 @@ def _review_score(
     return min(pts, 30), f"reviews={rc} rating={r}"
 
 
+CLOSED_PERMANENTLY_PENALTY = -10_000
+
+
 def _business_status_score(business_status: str | None) -> tuple[int, str]:
-    """Hard exclude jei CLOSED_PERMANENTLY (Google žinia, kad biznis miręs)."""
+    """Hard exclude jei CLOSED_PERMANENTLY (Google žinia, kad biznis miręs).
+
+    Penalty pakankamai didelis, kad jokios kitos komponentės nesumuotų į
+    teigiamą total'ą — efektyviai išstumiam į sort'o apačią net jei
+    `--min-score` nebuvo užstatytas. Naudoti `total < 0` filter'ą call site'e.
+    """
     if business_status == "CLOSED_PERMANENTLY":
-        return -100, "CLOSED_PERMANENTLY"
+        return CLOSED_PERMANENTLY_PENALTY, "CLOSED_PERMANENTLY"
     if business_status == "CLOSED_TEMPORARILY":
         return -20, "CLOSED_TEMPORARILY"
     return 0, ""
@@ -211,6 +222,7 @@ def score_v2(
     tech_stack: str | None,
     mobile_friendly: int | None,
     ssl_valid: int | None,
+    formatted_address: str | None = None,
 ) -> ScoreBreakdown:
     """V2-LITE pain-signal score.
 
@@ -243,6 +255,11 @@ def score_v2(
     b.stale_website, r = _stale_website_score(footer_year, tech_stack, mobile_friendly, ssl_valid)
     if r:
         b.reasons.append(f"stale: {r} (+{b.stale_website})")
+
+    tier, sub, _st = tier_from_address(formatted_address)
+    b.suburb_tier, r = tier_score(tier)
+    if r:
+        b.reasons.append(f"suburb: {r} ({sub}) (+{b.suburb_tier})")
 
     return b
 
@@ -316,3 +333,76 @@ if __name__ == "__main__":  # pragma: no cover
         footer_year=None, tech_stack=None, mobile_friendly=None, ssl_valid=None,
     )
     print(f"\nDEAD website + reviews: total={b.total}")
+
+    # Case 5: has_domain=0 + classifier still ran (e.g. ABR stale, lead actually has site).
+    # Truth source = classifier output, ne ABR has_domain.
+    b = score_v2(
+        industry_keyword="electrical", state="QLD",
+        business_name="ABR Stale Pty Ltd",
+        gst_status="ACT", entity_type="PTY LTD", has_domain=0,
+        website_url="https://abrstale.com.au",
+        website_class=2,
+        rating=4.2, review_count=15,
+        business_status="OPERATIONAL",
+        footer_year=2017, tech_stack="wix", mobile_friendly=0, ssl_valid=1,
+    )
+    print(f"\nNo-ABR-domain + class=2 site: total={b.total}  chan={b.channel_avail}  stale={b.stale_website}")
+    assert b.channel_avail == 30, f"Expected 30 (bad/outdated), got {b.channel_avail}"
+    assert b.stale_website > 0, "stale_website should reflect pain signals"
+
+    # Case 6: CLOSED hard-exclude — total MUST be negative regardless of everything else.
+    b = score_v2(
+        industry_keyword="electrical", state="NSW", business_name="ZOMBIE Pty Ltd",
+        gst_status="ACT", entity_type="PTY LTD", has_domain=0,
+        website_url=None,
+        website_class=None, rating=5.0, review_count=500,
+        business_status="CLOSED_PERMANENTLY",
+        footer_year=None, tech_stack=None, mobile_friendly=None, ssl_valid=None,
+    )
+    print(f"\nCLOSED + 500 reviews stress test: total={b.total}")
+    assert b.total < 0, f"CLOSED must always be negative, got {b.total}"
+
+    # Case 7: has_domain=1 + website_url IS NULL + classifier never ran
+    # (ABR thinks domain exists, Places returned no URL, classifier had nothing to do).
+    b = score_v2(
+        industry_keyword="plumbing", state="VIC",
+        business_name="Ghost Domain Pty Ltd",
+        gst_status="ACT", entity_type="PTY LTD", has_domain=1,
+        website_url=None,
+        website_class=None, rating=4.5, review_count=30,
+        business_status="OPERATIONAL",
+        footer_year=None, tech_stack=None, mobile_friendly=None, ssl_valid=None,
+    )
+    print(f"\nGhost domain (ABR yes, Places no URL): total={b.total}  chan={b.channel_avail}")
+    # Be class'o + be URL — laikom kaip nežinom (ne 40 'no website', kad neperdėtume).
+    assert b.channel_avail == 10, f"unknown should give 10, got {b.channel_avail}"
+
+    # Case 8: suburb tier bonus — Mosman PTY LTD with reviews, no website
+    b = score_v2(
+        industry_keyword="electrical", state="NSW",
+        business_name="Mosman Sparks Pty Ltd",
+        gst_status="ACT", entity_type="PTY LTD", has_domain=0,
+        website_url=None,
+        website_class=None, rating=4.7, review_count=30,
+        business_status="OPERATIONAL",
+        footer_year=None, tech_stack=None, mobile_friendly=None, ssl_valid=None,
+        formatted_address="42 Avenue Rd, Mosman NSW 2088",
+    )
+    print(f"\nMOSMAN tier-1 + no website: total={b.total}  suburb_pts={b.suburb_tier}")
+    assert b.suburb_tier == 5, f"Expected +5 for tier-1, got {b.suburb_tier}"
+
+    # Case 9: regional address — no suburb bonus, no penalty
+    b = score_v2(
+        industry_keyword="plumbing", state="QLD",
+        business_name="Outback Pipes Pty Ltd",
+        gst_status="ACT", entity_type="PTY LTD", has_domain=0,
+        website_url=None,
+        website_class=None, rating=4.5, review_count=20,
+        business_status="OPERATIONAL",
+        footer_year=None, tech_stack=None, mobile_friendly=None, ssl_valid=None,
+        formatted_address="123 Main St, Mount Isa QLD 4825",
+    )
+    print(f"REGIONAL no bonus: total={b.total}  suburb_pts={b.suburb_tier}")
+    assert b.suburb_tier == 0, f"Expected 0 for regional, got {b.suburb_tier}"
+
+    print("\nAll self-test assertions PASSED.")

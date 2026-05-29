@@ -1,7 +1,7 @@
 # PROJECT_STATUS — ABR Outreach Pipeline
 
-**Last updated:** 2026-05-26 (sesija #9 — V2-LITE P0 LIVE: validators + website classifier + scoring_v2 + Top 50 gold leads)
-**Phase:** Phase 7 real-data validation — Stage A + B LIVE, **V2-LITE P0 LIVE** (380 leads classified, 14 DB stulpelių, scoring_v2). Top 50 gold leads CSV paruoštas manual outreach'ui. P1 (sales angle generator + suburb tier) atidėtas sesijai #10.
+**Last updated:** 2026-05-26 (sesija #10 — V2-LITE P1 LIVE: suburb_tier + rule-based sales_angle + strict pre-flight + P0 fix'ai. $0 budget)
+**Phase:** Phase 7 real-data validation — Stage A + B LIVE, **V2-LITE P0+P1 LIVE** (380 leads classified, 498/498 turi angle subject+body, top 50 strict gold leads CSV su 0 DEFAULT templates). Blokerius: vartotojo manual outreach NEpradėta (Gmail nesukurta).
 
 ## Tikslas
 
@@ -26,18 +26,22 @@ Status legend: Planned = 0%, In Build = 30%, Tested = 70%, Production = 100%, Bl
 | 3f | Stage C — SerpAPI socials lookup | (planned) | **Planned** | Atidėtas iki post-V2-LITE proof. SerpAPI ($5/1k, 100 free/mėn). Cap 5k leads = $25. Vykdoma TIK lead'ams be jokio kontakto + priority_score ≥ 50. |
 | 3g | Enrichment orchestrator | (planned) | **Planned** | Sesija #11+ (po P1). `run_enrichment.py --stage all` — vienas CLI visi 3 stage'ai iš eilės. |
 | 3h | V2-LITE validators (AU validation) | [src/enrichment/validators.py](src/enrichment/validators.py) | **Production** | Sesija #9: vote-based 3-signal (phone +61 / website .au / address AU state). 13/13 self-test PASS. Integruotas į enrich_places `_enrich_one`. Anti-PROXYTECH bug fix. |
-| 3i | V2-LITE website classifier | [src/enrichment/website_classifier.py](src/enrichment/website_classifier.py) | **Tested** | Sesija #9: async heuristic classifier (SSL + viewport + 15 tech stack patterns + footer year + TTFB). 380 leads classified 2.5min ($0): 68 dead / 99 bad / 213 modern. Wix CMS footer false-positive rizika (P1 follow-up). |
-| 3j | V2-LITE scoring | [src/enrichment/scoring_v2.py](src/enrichment/scoring_v2.py) | **Tested** | Sesija #9: ~200pt formulė (base_icp + channel + review + business_status + revenue_proxy + stale_website). ScoreBreakdown auditable. 4/4 self-test. Bug mid-stride fix: double-count no_website+outdated. CLOSED_PERMANENTLY hard exclude trūksta (-100pt vis tiek per silpna). |
-| 3k | Migration framework | [migrations/apply_migration.py](migrations/apply_migration.py) | **Production** | Sesija #9: idempotent SQLite ADD COLUMN runner (PRAGMA table_info pre-check). 001_v2lite.sql: 14 stulpelių + 4 indeksai applied 0 errors. |
-| 3l | Top N gold leads exporter | [export_gold_leads.py](export_gold_leads.py) | **Tested** | Sesija #9: CSV exporter su pain-signal breakdown (30 stulpeliai). 498 candidates → top 50 (125-174pt). 48/50 turi bent vieną kontaktą. CLOSED_PERMANENTLY SQL prefilter su `--include-closed` override. |
+| 3i | V2-LITE website classifier | [src/enrichment/website_classifier.py](src/enrichment/website_classifier.py) | **Production** | Sesija #9: async heuristic classifier (SSL + viewport + 15 tech stack patterns + footer year + TTFB). 380 leads classified 2.5min ($0): 68 dead / 99 bad / 213 modern. Sesija #10: `_is_cms_template_footer()` guard 10 markerių (Wix/Squarespace/GoDaddy). Re-classify 25 Wix: footer set 10→9 (minor false-positive panaikintas). |
+| 3j | V2-LITE scoring | [src/enrichment/scoring_v2.py](src/enrichment/scoring_v2.py) | **Production** | Sesija #9: ~200pt formulė (6 komponentų). Sesija #10: + `suburb_tier` 7-tas komponentas (+5/+3pt), CLOSED_PERMANENTLY_PENALTY -10000 hard exclude. 9/9 self-test cases PASS (4→9, įskaitant ghost domain, CLOSED stress, tier-1, regional). |
+| 3k | Migration framework | [migrations/apply_migration.py](migrations/apply_migration.py) | **Production** | Sesija #9: idempotent SQLite ADD COLUMN runner (PRAGMA table_info pre-check). 001_v2lite.sql: 14 stulpelių + 4 indeksai applied. Sesija #10: 002_sales_angle.sql (4 stulpeliai + 1 index) applied 5/5 0 errors. |
+| 3l | Top N gold leads exporter | [export_gold_leads.py](export_gold_leads.py) | **Production** | Sesija #9: CSV exporter su pain-signal breakdown (30 stulpeliai). Sesija #10: `--strict` flag (pain signal + reviews≥10 + phone + ICP≥50) + 4 nauji stulpeliai (suburb_pts, angle_template_id, angle_subject, angle_body) → 34 stulpeliai total. 498→255 strict→top 50, 0 DEFAULT templates. |
+| 3m | V2-LITE suburb tier | [src/enrichment/suburb_tier.py](src/enrichment/suburb_tier.py) | **Production** | Sesija #10: 87 tier-1 (Mosman/Toorak/Vaucluse/Cottesloe) + 142 tier-2 (CBD + middle-affluent) + 9 CBD postcode fallback. Parser regex `<Suburb> STATE POSTCODE$` atmeta non-AU. Doctest + manual self-test PASS. Heuristic source — CoreLogic 2023-2024. |
+| 3n | V2-LITE sales angle (rule-based) | [src/enrichment/sales_angle.py](src/enrichment/sales_angle.py) | **Production** | Sesija #10: 11 priority-ordered template'ų (NE Claude — $0 only per user decision). 498/498 leads filled. Distribution: 218 DEFAULT / 108 NO_SITE_LOW_REVIEWS / 71 CLASSIFIER_DEAD / 36 LEGACY_STACK / 26 NO_MOBILE / 19 STALE_FOOTER / 8 NO_SSL / 9 WEBSITE_CLASS_2 / 2 STALE+MOBILE / 1 WIX_OLD. Unit test'ų trūksta. |
 | 4 | Outreach generator | [generate_outreach.py](generate_outreach.py) | **Tested** | 27 templates su import-time assert'ais, end-to-end test'as ant synthetic dataset pereina |
 | 5 | Orchestrator | [run.py](run.py) | **Tested** | Pre-flight, --step/--test/--state/--gst-status/--resume, Telegram, summary table; parse + DNS stage'ai Production-validated, social/messages priklauso nuo API |
 | 6 | Unit test suite | [test_pipeline.py](test_pipeline.py) | **Production** | 46/46 PASS; tikrina visus 4 core helpers + mocked DNS |
 | 7 | Dashboard (outreach tracking) | [dashboard/app.py](dashboard/app.py) | **Tested** | Streamlit, 5 tabai (Overview/Leads/Analytics/Activity/Settings), SQLite [dashboard/db.py](dashboard/db.py), CSV importer su industry auto-detect, LT/EN i18n. Paleistas — HTTP 200, 159,070 leads loaded. UI interaktyvūs flow (mark sent, edit detail, audit log) **nepatvirtinti naršyklėje**. |
 
-**Pabaigtumas:** (1.0 + 1.0 + 0.7 + 0.3 + 0.0 + 0.7 + 0.7 + 0.0 + 0.0 + 1.0 + 0.7 + 0.7 + 1.0 + 0.7 + 1.0) / 15 × 100% ≈ **77%**
+**Pabaigtumas:** (10 × 1.0 + 6 × 0.7 + 1 × 0.3 + 2 × 0.0) / 18 × 100% = 14.5 / 18 ≈ **81%**
 
-> Sesija #9 (2026-05-26): pridėti 5 V2-LITE modulis (validators Production, website_classifier Tested, scoring_v2 Tested, migration framework Production, gold leads exporter Tested). Denominator 10 → 15, pabaigtumas 67% → 77%. Reali pažanga + 14 naujų DB stulpelių + pirma pain-signal-based gold leads CSV paruošta manual outreach'ui.
+> Sesija #10 (2026-05-26): + 2 V2-LITE modulis (suburb_tier Production, sales_angle Production); 3 moduliai pakelti Tested → Production (website_classifier, scoring_v2, gold leads exporter). Denominator 15 → 18 (skip 3c Skipped). Numerator išaugo nuo praeito skaičiavimo (~9.5) iki 14.5. Pabaigtumas: kruopščiai perskaičiuotas pagal status legend → **81%** (sesija #9 deklaruotas 77% skaičiavime turėjo aritmetikos klaidą — realiai buvo ~70%).
+>
+> Sesija #9 (2026-05-26): pridėti 5 V2-LITE modulis (validators Production, website_classifier Tested, scoring_v2 Tested, migration framework Production, gold leads exporter Tested). Denominator 10 → 15. Pabaigtumas deklaruotas 77% (re-check sesijoje #10 atskleidė aritmetikos klaidą — tikrasis ~70%).
 >
 > Sesija #6 antra pusė (2026-05-25): modulis 3c "Plan A — ABR Lookup" SKIPPED (statusas 0%, code ištrintas), pridėtas naujas 3d "Plan B — Places enrichment" In Build (research only, 30%). Denominator padidėjo 9 → 10, pabaigtumas krito 74% → 67%, BET reali strategija švaresnė — eliminated middleman API (ABR), tiesiogiai prie source-of-truth (Places turi trading_name + phone + website vienu call'u).
 >
@@ -47,19 +51,18 @@ Status legend: Planned = 0%, In Build = 30%, Tested = 70%, Production = 100%, Bl
 
 ## Iki 100% trūksta
 
-1. **V2-LITE P1 — sales angle generator (sesija #10):** Claude Haiku $0.001/lead × 500 = $0.50. 3 variants per lead (subject + body) saugomi DB. Pridėti `angle_v1/v2/v3` stulpeliai.
-2. **V2-LITE P1 — suburb tier (sesija #10):** 200 hardcoded AU suburbs, +5pt scoring_v2'jui (Tier 1 wealthy: Mosman/Toorak/Cottesloe).
-3. **Manual outreach pradžia (vartotojo darbas):** Gmail naujo accounto setup, 5-10 email per dieną iš Top 50 CSV, 2 savaičių target 1-2 replies.
-4. **Stage A re-process (jei manual'us outreach patvirtina V2-LITE):** 498 esamų OK leads gauna rating/reviewCount/businessStatus/priceLevel ($17.43 nominal, $0 real per free trial).
-5. **Mass run 84,532 likę eligible** — TIK po V2-LITE proof'o iš ≥1 closed deal'o.
-6. **Stage C — SerpAPI socials lookup** (atidėta, $5/1k × 5k = $25).
-7. **V2-LITE P0 follow-ups (P1 sesijoje):**
-   - `scoring_v2.py` self-test "no website + classifier ran later" case
-   - `_extract_footer_year` ignore'ti footer year jei CMS substring ("wix"/"squarespace"/"godaddy") elemente — Wix CMS false-positive
-   - CLOSED_PERMANENTLY hard SQL filter `export_gold_leads.py` (vietoj `-100pt` soft penalty)
-8. **Apify FB lookup verslams be svetainės** (~108 leads) — atidėta P2.
-9. **Dashboard UI loop patikrinimas** — Tested → Production: realus operatoriaus scenarijus naršyklėje.
-10. **importer.py bug fix** (carry-over sesija #5): `--csv has_social.csv` perrašo `business_name=""`. Fix: route social-schema CSV į `import_socials_if_present()` only.
+1. **Manual outreach kickoff (KRITINIS, vartotojo darbas — sesija #11):** Gmail paskyros setup + 5-10 emails per dieną iš `gold_leads_20260526_2218.csv`. Be reply'ų neturim signal'o ar V2-LITE patvirtina.
+2. **`sales_angle.py` unit test'ai** — template priority assert'ai (CLASSIFIER_DEAD > LEGACY_STACK), placeholder safety, fallback edge cases. Dabar tik dry-run preview validation.
+3. **scoring_v2 ghost domain edge case** (`has_domain=1 + URL=NULL` → 0pt vietoj +10pt) — patikrinti su realiais reply duomenimis sesijoje #11.
+4. **Stage A re-process (po V2-LITE proof'o):** 498 esamų OK leads gauna rating/reviewCount/businessStatus/priceLevel ($17.43 nominal, $0 real per free trial).
+5. **Mass run 84,532 likę eligible** — TIK po ≥1 closed deal'o iš 50 outreach attempts.
+6. **Stage C — SerpAPI socials lookup** (atidėta, $5/1k × 5k = $25, gali būti atmesta per $0 budget rule).
+7. **Apify FB lookup verslams be svetainės** (~108 leads) — atidėta P2.
+8. **Dashboard UI loop patikrinimas** — Tested → Production: realus operatoriaus scenarijus naršyklėje.
+9. **importer.py bug fix** (carry-over sesija #5): `--csv has_social.csv` perrašo `business_name=""`. Fix: route social-schema CSV į `import_socials_if_present()` only.
+10. **Wix CMS footer fix išplėtimas** — pridėti Wix Editor X, Squarespace 7.1 marker'ius (dabar fix konservatyvus — tik 1/10 footer'ių panaikinti).
+11. **suburb_tier annual refresh strategy** — hardcoded list iš 2023-2024 CoreLogic, reikia decision'o ar drop'inti į CSV failą / cron'inti refresh.
+12. **Orchestrator** (`src/enrichment/run_enrichment.py`) — vienas CLI visi Stage'ai + V2-LITE post-processors (classifier + sales_angle + gold export). Sesija #12+.
 
 ## Known issues / shortcuts
 

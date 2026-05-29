@@ -46,6 +46,7 @@ CSV_COLUMNS = (
     "stale_pts",
     "revenue_pts",
     "status_pts",
+    "suburb_pts",
     "has_website",
     "website_class",
     "tech_stack",
@@ -62,6 +63,9 @@ CSV_COLUMNS = (
     "ig_url",
     "formatted_address",
     "au_validation_status",
+    "angle_template_id",
+    "angle_subject",
+    "angle_body",
     "score_reasons",
 )
 
@@ -82,6 +86,7 @@ def fetch_candidates(
     require_contact: bool,
     exclude_closed: bool,
     exclude_not_au: bool,
+    strict: bool = False,
 ) -> list[sqlite3.Row]:
     """Užkrauna visus lead'us, kurie potencialiai gali tapti gold lead.
 
@@ -91,6 +96,11 @@ def fetch_candidates(
       - CLOSED_PERMANENTLY (jei exclude_closed) → skip
       - not_au (jei exclude_not_au) → skip
       - jei require_contact → bent vienas iš phone/email/fb/ig must be NOT NULL
+      - jei strict → kombinuotas pre-flight check:
+            (no_website OR website_class IN (1,2))   # turi pain signal
+            AND (review_count >= 10 OR rating IS NULL)
+            AND phone NOT NULL
+            AND priority_score >= 50
 
     Score'inam Python pusėje (NULL-safe + auditable trail).
     """
@@ -108,6 +118,20 @@ def fetch_candidates(
             "(e.phone IS NOT NULL OR e.contact_email IS NOT NULL "
             " OR e.scraped_fb_url IS NOT NULL OR e.scraped_ig_url IS NOT NULL)"
         )
+    if strict:
+        # 1. Pain signal: be svetainės ARBA classifier'is matė problemų
+        where.append(
+            "("
+            " (e.website_url IS NULL OR LENGTH(TRIM(e.website_url)) = 0)"
+            " OR e.website_class IN (1, 2)"
+            ")"
+        )
+        # 2. Review proof: ≥10 reviews ARBA dar nepatikrinta (NULL — neturim duomenų)
+        where.append("(e.review_count IS NULL OR e.review_count >= 10)")
+        # 3. Phone reachable
+        where.append("(e.phone IS NOT NULL AND LENGTH(TRIM(e.phone)) > 0)")
+        # 4. Base ICP cutoff
+        where.append("(e.priority_score IS NULL OR e.priority_score >= 50)")
 
     sql = f"""
         SELECT l.abn, l.business_name, l.industry_keyword, l.state, l.postcode,
@@ -117,7 +141,8 @@ def fetch_candidates(
                e.rating, e.review_count, e.business_status,
                e.au_validation_status,
                e.website_class, e.tech_stack, e.footer_year,
-               e.mobile_friendly, e.ssl_valid
+               e.mobile_friendly, e.ssl_valid,
+               e.angle_template_id, e.angle_subject, e.angle_body
         FROM leads l
         JOIN enrichment e ON e.abn = l.abn
         WHERE {' AND '.join(where)}
@@ -143,6 +168,10 @@ def main(argv: list[str] | None = None) -> int:
         "--include-not-au", action="store_true",
         help="Include not_au validation (NE rekomenduoju)",
     )
+    parser.add_argument(
+        "--strict", action="store_true",
+        help="Pre-flight filter: only painful sites + reviews ≥10 + phone + ICP ≥50",
+    )
     parser.add_argument("--db", type=Path, default=None)
     parser.add_argument(
         "--output", type=Path, default=None,
@@ -161,8 +190,10 @@ def main(argv: list[str] | None = None) -> int:
         require_contact=args.require_contact,
         exclude_closed=not args.include_closed,
         exclude_not_au=not args.include_not_au,
+        strict=args.strict,
     )
-    print(f"Candidates after pre-filter: {len(rows)}")
+    label = "strict pre-flight" if args.strict else "pre-filter"
+    print(f"Candidates after {label}: {len(rows)}")
 
     if not rows:
         print("Nothing matched. Try removing --require-contact or lowering --min-score.")
@@ -187,6 +218,7 @@ def main(argv: list[str] | None = None) -> int:
             tech_stack=r["tech_stack"],
             mobile_friendly=r["mobile_friendly"],
             ssl_valid=r["ssl_valid"],
+            formatted_address=r["formatted_address"],
         )
         if b.total < args.min_score:
             continue
@@ -198,6 +230,7 @@ def main(argv: list[str] | None = None) -> int:
             "stale_pts": b.stale_website,
             "revenue_pts": b.revenue_proxy,
             "status_pts": b.business_status,
+            "suburb_pts": b.suburb_tier,
             "score_reasons": " | ".join(b.reasons),
         }, r))
 
@@ -243,6 +276,7 @@ def main(argv: list[str] | None = None) -> int:
                 "stale_pts": score_dict["stale_pts"],
                 "revenue_pts": score_dict["revenue_pts"],
                 "status_pts": score_dict["status_pts"],
+                "suburb_pts": score_dict["suburb_pts"],
                 "has_website": "yes" if (row["website_url"] and row["website_url"].strip()) else "no",
                 "website_class": row["website_class"] if row["website_class"] is not None else "",
                 "tech_stack": row["tech_stack"] or "",
@@ -259,6 +293,9 @@ def main(argv: list[str] | None = None) -> int:
                 "ig_url": row["scraped_ig_url"] or "",
                 "formatted_address": row["formatted_address"] or "",
                 "au_validation_status": row["au_validation_status"] or "",
+                "angle_template_id": row["angle_template_id"] or "",
+                "angle_subject": row["angle_subject"] or "",
+                "angle_body": row["angle_body"] or "",
                 "score_reasons": score_dict["score_reasons"],
             })
 

@@ -241,12 +241,46 @@ def _has_viewport_meta(soup: BeautifulSoup) -> bool:
     return "width" in content or "device-width" in content
 
 
+# CMS-template footers: signals, kad metai NĖRA kliento footer'is, o CMS šablonas.
+# Wix: "Powered by Wix", "Create a website with Wix", "wix.com".
+# Squarespace: "Made with Squarespace".
+# Weebly: "Powered by Weebly".
+# Jei footer text'e randam kažką iš šito + matom 2025/2026 metus — labai tikėtina,
+# kad tai "Copyright 2025 Wix" CMS marker'is, NE kliento "© 2014 ACME" stale signal.
+_CMS_FOOTER_MARKERS: tuple[str, ...] = (
+    "powered by wix",
+    "create a website with wix",
+    "wix.com",
+    "wixsite.com",
+    "made with squarespace",
+    "powered by weebly",
+    "powered by godaddy",
+    "godaddysites.com",
+    "powered by webnode",
+    "powered by jimdo",
+)
+
+
+def _is_cms_template_footer(footer_text: str) -> bool:
+    """True jei footer turi CMS „powered by" marker'į — metai NEpatikimi."""
+    if not footer_text:
+        return False
+    low = footer_text.lower()
+    return any(m in low for m in _CMS_FOOTER_MARKERS)
+
+
 def _extract_footer_year(soup: BeautifulSoup, full_html: str) -> int | None:
-    """Try footer-specific first, fallback į bet kokius 20XX HTML'e."""
-    # Footer tag first.
+    """Try footer-specific first, fallback į bet kokius 20XX HTML'e.
+
+    CMS-template guard: jei footer turi "Powered by Wix" / "Made with Squarespace"
+    ir pan., grąžinam None — CMS pats deda current year savo footer'yje, tai
+    NE kliento "stale" signal'as.
+    """
     footer = soup.find("footer")
     if footer:
         text = footer.get_text(" ", strip=True)
+        if _is_cms_template_footer(text):
+            return None
         m = _FOOTER_YEAR_RE.search(text)
         if m:
             year = int(m.group(1))
@@ -258,7 +292,11 @@ def _extract_footer_year(soup: BeautifulSoup, full_html: str) -> int | None:
             if 2000 <= year <= CURRENT_YEAR + 1:
                 return year
 
-    # Global © YYYY (anywhere in HTML).
+    # Global © YYYY fallback — bet TIK jei nematom CMS markerio visame HTML.
+    # (Wix-as svetainė gali turėti kliento © 2014 pagrindiniame tekste, tačiau
+    # tada Wix footer template'as VISADA tame pat HTML — saugiausia praleisti.)
+    if _is_cms_template_footer(full_html):
+        return None
     m = _FOOTER_YEAR_RE.search(full_html)
     if m:
         year = int(m.group(1))

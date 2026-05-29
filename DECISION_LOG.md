@@ -4,6 +4,43 @@ Architektūriniai sprendimai. Naujausi viršuje.
 
 ---
 
+## 2026-05-26 (sesija #10) — V2-LITE P1: $0 budget hard rule + rule-based pivot
+
+### 1. Claude Haiku sales angle generator — ATMESTAS, pivot į rule-based templates
+
+**Sprendimas:** Sales angle generator implementuotas kaip 11 hardcoded template'ų su priority-ordered match'inimu (`src/enrichment/sales_angle.py`). NĖRA jokio LLM API call'o.
+
+**Atmestos alternatyvos:**
+- Claude Haiku per `anthropic` SDK ($0.001/lead × 500 = $0.50 total) — siūlyta sesijoje #9 plane, sesijoje #10 atmesta
+- 3 variants per lead (subject + body) per Haiku — atmesta kartu
+
+**Pagrindimas:** Vartotojo aiškus pasakymas: "nedarome taip kad reiktu man moketi. claude haiku atmetamas. daryk be jo". Patvirtina pattern'ą iš sesijos #9, kur 498 leads re-process buvo SKIPPED dėl to paties principo, nors būtų buvęs $0 real per free trial. Šitas projektas turi $0 hard rule — net jei budget atrodo trivialus, sprendimas eina į feedback memory ([feedback_zero_budget.md](C:\Users\pinig\.claude\projects\c--Users-pinig-scrapinimas-be-web-saito-Australija\memory\feedback_zero_budget.md)).
+
+**Trade-off:** Template'ai mažiau personalized nei Haiku output, bet pakankamai specifiniai per pain signal targeting (CLASSIFIER_DEAD vs LEGACY_STACK vs STALE_FOOTER atskira logika). Deterministic + auditable + free.
+
+### 2. CLOSED_PERMANENTLY: hard penalty -10,000 vietoj SQL hard exclude
+
+**Sprendimas:** Padidinti `_business_status_score` penalty nuo -100 į -10,000 (`CLOSED_PERMANENTLY_PENALTY` konstanta), palikti vis tiek scoring layer'yje, NE perkelti į SQL filter.
+
+**Atmestos alternatyvos:**
+- SQL `WHERE business_status != 'CLOSED_PERMANENTLY'` hard exclude `export_gold_leads.py` — jau yra `exclude_closed=True` default; bet override'inant `--include-closed` lead'ai sugrįžta su 50pt totalu jei penalty silpna
+- Soft penalty -200 (tarpinis variantas) — vis tiek leidžia teigiamą total'ą su `base_icp=90 + reviews=30 + channel=40 = 160 - 200 = -40` ribose, bet edge cases nestabilūs
+
+**Pagrindimas:** -10,000 garantuoja `total < 0` nepriklausomai nuo bet kokios komponentų kombinacijos (max teoriškai 100+40+30+10+40+5 = 225, minus 10,000 = -9,775 worst case). Self-test case'as patikrina su 500 reviews stress (-9,840 total). Lieka scoring layer'yje — vienas truth source vietoj duplicated SQL gate.
+
+### 3. Suburb tier: hardcoded Python frozenset vietoj DB tabelės / CSV
+
+**Sprendimas:** 87 tier-1 + 142 tier-2 suburb pairs `frozenset[(str, str)]` literal'as `src/enrichment/suburb_tier.py` viduje.
+
+**Atmestos alternatyvos:**
+- `suburbs.csv` failas + load į memory startup'e — overkill 229 įrašams; CSV management overhead be naudos
+- DB lentelė `suburb_tiers (suburb, state, tier)` + JOIN scoring'e — papildoma migration, runtime JOIN cost, refresh strategy reikalauja UI ar admin tool
+- Pull iš ABS API ar property service — nė vienas free, sertifikuotas wealth indikatorius, ir suburb wealth nesikeičia per metus
+
+**Pagrindimas:** Suburb wealth keičiasi labai lėtai (Mosman buvo premium 2010, bus premium 2030). Hardcoded frozenset = O(1) lookup, version-controlled per git, refresh = annual code edit. Heuristic source dokumentuotas modulio docstring'e (CoreLogic 2023-2024 + RealEstate.com.au).
+
+---
+
 ## 2026-05-26 (sesija #9) — V2-LITE P0: pasirinkti architektūriniai sprendimai
 
 ### 1. Migration framework — atskiri SQL failai + Python idempotent runner

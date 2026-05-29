@@ -1,5 +1,96 @@
 # SESSION_STATUS
 
+## Paskutinė sesija: 2026-05-26 (sesija #10 — V2-LITE P1 LIVE: suburb_tier + rule-based sales_angle + strict pre-flight + P0 fix'ai. $0 budget, Claude Haiku atmestas)
+
+### Ką padarėme
+
+**P0 fix'ai (carry-over iš sesijos #9):**
+- [src/enrichment/scoring_v2.py](src/enrichment/scoring_v2.py) `_business_status_score`: CLOSED_PERMANENTLY penalty -100 → -10,000 (`CLOSED_PERMANENTLY_PENALTY` konstanta). Hard exclude — total < 0 nepriklausomai nuo kitų komponentų.
+- scoring_v2 self-test: pridėti 5 nauji case'ai (no-ABR-domain + class=2, CLOSED stress su 500 reviews, ghost domain has_domain=1+URL=NULL, Mosman tier-1, regional). Buvo 4 case'ai → dabar 9, visi PASS su `assert` patvirtinimais.
+- [src/enrichment/website_classifier.py](src/enrichment/website_classifier.py) `_extract_footer_year`: pridėtas `_is_cms_template_footer()` guard — 10 CMS marker pattern'ų (Wix/Squarespace/GoDaddy/Weebly/Webnode/Jimdo). Re-classify 25 Wix sites: footer_year set 10→9 (false-positive minor, fix konservatyvus — Wix sites visi vis tiek class=2 per LEGACY_FREE_STACKS).
+
+**Suburb tier (NAUJAS) — [src/enrichment/suburb_tier.py](src/enrichment/suburb_tier.py):**
+- 87 tier-1 suburbs (Mosman, Toorak, Vaucluse, Cottesloe, Peppermint Grove, Forrest etc.) — +5pt scoring_v2
+- 142 tier-2 suburbs (CBD postcode'ai + middle-affluent enclaves Surry Hills, Annandale, Burleigh Heads etc.) — +3pt
+- 9 CBD postcode fallback (2000/3000/4000/5000/6000/7000/0800/2600/2601)
+- Parser regex `<Suburb> STATE POSTCODE$` veikia ant Places `formatted_address` — atmeta non-AU adresus (VA/USA, Thailand etc.)
+- Doctest + manual self-test PASS (11 sample addresses)
+
+**scoring_v2 integration:**
+- `ScoreBreakdown` dataclass: pridėtas `suburb_tier: int = 0` laukas, `total` formulė papildyta
+- `score_v2()` signature: pridėtas `formatted_address: str | None = None` keyword arg
+- Test rezultatas: Mosman PTY LTD + 30 reviews + no_website + electrical NSW = 160pt (+5 nuo suburb)
+
+**Sales angle (NAUJAS, $0) — [src/enrichment/sales_angle.py](src/enrichment/sales_angle.py):**
+- 11 priority-ordered template'ai (rule-based, NE Claude — user atmetė per $ aversion):
+  1. CLASSIFIER_DEAD — site offline
+  2. NO_SITE_HIGH_REVIEWS — no site + reviews ≥ 20
+  3. WIX_OLD_FOOTER — wix + footer ≤ 2019
+  4. LEGACY_STACK — wix/weebly/godaddy/etc
+  5. STALE_FOOTER_NO_MOBILE — footer < 2020 + mobile broken
+  6. STALE_FOOTER — footer < 2020
+  7. NO_MOBILE — viewport meta missing
+  8. NO_SSL — http only
+  9. WEBSITE_CLASS_2 — fallback class=2
+  10. NO_SITE_LOW_REVIEWS — no site (under threshold)
+  11. DEFAULT — generic fallback
+- `_format_safe()` su `_SafeDict` (KeyError → palieka `{key}` originale, ne crash); derived placeholders (`age`, `sender_name`)
+- DB: [migrations/002_sales_angle.sql](migrations/002_sales_angle.sql) — 4 stulpeliai (angle_template_id/subject/body/generated_at) + 1 index. Applied 5/5 0 errors.
+- LIVE run: 498/498 leads filled. Distribution: 218 DEFAULT, 108 NO_SITE_LOW_REVIEWS, 71 CLASSIFIER_DEAD, 36 LEGACY_STACK, 26 NO_MOBILE, 19 STALE_FOOTER, 9 WEBSITE_CLASS_2, 8 NO_SSL, 2 STALE_FOOTER_NO_MOBILE, 1 WIX_OLD_FOOTER
+
+**export_gold_leads.py — `--strict` flag:**
+- SQL pre-filter: `(no_website OR website_class IN (1,2)) AND (review_count >= 10 OR NULL) AND phone NOT NULL AND priority_score >= 50`
+- +4 nauji CSV stulpeliai (34 vietoj 30): `suburb_pts`, `angle_template_id`, `angle_subject`, `angle_body`
+- score_v2 call gauna `formatted_address` argumentą
+- LIVE run: 498 candidates → 255 strict → top 50 (125-174pt range)
+
+**Top 50 gold leads v2 — [output/gold_leads_20260526_2218.csv](output/gold_leads_20260526_2218.csv):**
+- 0 DEFAULT templates top 50 (strict išmeta visus "modern site, no pain" lead'us)
+- Distribution: 20 LEGACY_STACK / 10 STALE_FOOTER / 8 NO_SITE_LOW_REVIEWS / 5 CLASSIFIER_DEAD / 3 NO_MOBILE / 1× WIX_OLD/STALE+MOBILE/CLASS2/NO_SSL
+- 100% phone (strict gate), 100% turi paste-ready email subject+body
+- 6/50 gauna suburb tier bonus (1 tier-1 New Farm QLD, 5 tier-2 Surry Hills/Burleigh/Kingsford/Annandale)
+- Top #3 "Skilled Electrical Services" — Wix 2016 → "your Wix site looks 10 years old" (legit footer, CMS fix nepanaikino)
+
+**Memory atnaujinta:**
+- [project_state.md](C:\Users\pinig\.claude\projects\c--Users-pinig-scrapinimas-be-web-saito-Australija\memory\project_state.md) — 85% pabaigtumas, 17 modulių matricoje, sesijos #10 finals
+- [v2_lite_strategy.md](C:\Users\pinig\.claude\projects\c--Users-pinig-scrapinimas-be-web-saito-Australija\memory\v2_lite_strategy.md) — P1 DONE markeris + Claude Haiku perkeltas į "NEDARYTI"
+- [feedback_zero_budget.md](C:\Users\pinig\.claude\projects\c--Users-pinig-scrapinimas-be-web-saito-Australija\memory\feedback_zero_budget.md) — NAUJAS, $0 hard rule projektui
+- MEMORY.md index — atnaujintas su sesija #10 + nauja feedback eilute
+
+### Kas liko / nepatvirtinta
+
+- **Wix CMS footer fix efektas marginalus** — 25 Wix re-classify → tik 1 footer panaikintas. Galimos papildomos pattern'os (Wix Editor X JS bundle, Squarespace 7.1 marker'iai), bet ne prioritetas (Wix vis tiek class=2)
+- **`sales_angle.py` neturi unit test'ų** — tik dry-run preview + manual inspection. Trūksta test'o, kad template selection logic teisingai prioritetuojama (pvz. CLASSIFIER_DEAD win'a prieš LEGACY_STACK kai abu match'ina; STALE_FOOTER_NO_MOBILE win'a prieš STALE_FOOTER ar NO_MOBILE atskirai)
+- **suburb_tier sąrašas heuristic** — 87+142 suburbs hardcoded iš CoreLogic 2023-2024 reports + manual judgment. Ne ABS data, gali būti outdated po 2-3 metų. Jokio refresh mechanism'o.
+- **scoring_v2 ghost domain edge case** — `has_domain=1 + website_url=NULL` duoda +10pt ("website state unknown"). Per silpnas signal — nieko negalim parduoti, nes net nežinom URL. Sesijoje #11 patikrinti su realiais duomenimis ar verta keisti į 0.
+- **Vartotojo manual outreach NEpradėta** — Gmail paskyra nesukurta, 50 gold leads laukia siuntimo. KRITINIS blokerius — be outreach negaunam reply feedback'o, neturim signal'o ar V2-LITE patvirtina.
+- **Re-process 498 OK leads su rating** — vis dar SKIPPED (user decision: $0 priority)
+- **Mass run 84k** — atidėta post-outreach proof
+
+### Kitas žingsnis (sesija #11 — Manual Outreach Kickoff)
+
+1. **Gmail paskyros setup** (5-10 min, vartotojo darbas):
+   - Empirra brand ar personal Gmail
+   - Reply-to ir signature paruošti
+
+2. **Pirma siuntimo banga** (vartotojo darbas, ~30 min):
+   - 5-10 emails per dieną × 5 dienos = 25-50 attempts
+   - Paimti tiesiogiai iš [output/gold_leads_20260526_2218.csv](output/gold_leads_20260526_2218.csv) — `angle_subject` + `angle_body` paste-ready
+   - Pavyzdys: #3 Skilled Electrical Services → Wix 2016 angle
+
+3. **Reply tracking** (jei reikės — light DB update):
+   - `enrichment.outreach_sent_at` + `outreach_replied_at` stulpeliai (jei dar neegzistuoja — migration 003)
+   - Manual mark'ing per Streamlit dashboard ar direct SQL
+
+4. **DoD sesijai #11:** 1-2 reply ARBA 1 booked call iš 50 attempts → V2-LITE patvirtina, galim į sesiją #12 planuoti mass run 84k. Jei 0 reply → iterate angle templates / ICP narrowing.
+
+### Žinomi minor follow-ups (sesijoms #12+)
+
+- `sales_angle.py` unit test'as (template priority, placeholder safety, fallback edge cases)
+- scoring_v2 ghost domain (+10 → 0) — ride along su sesijos #11 patirtimi
+- suburb_tier refresh strategy (annual review, ar drop'inti į CSV failą iš hardcoded)
+- Outreach tracking schema (migration 003 jei pradedam fix'ti reply mark'ingą)
+
 ## Paskutinė sesija: 2026-05-26 (sesija #9 — V2-LITE P0 LIVE: migration + validators + website classifier + scoring_v2 + Top 50 gold leads)
 
 ### Ką padarėme
@@ -205,6 +296,7 @@ Vartotojas pateikė detalų pasisakymą apie pipeline limit'us su 7 kritikomis (
 
 | Data | Trukmė | Self-score | Pabaigtumas | Santrauka |
 |---|---|---|---|---|
+| 2026-05-26 #10 | ~2h | 9/10 | 85% | V2-LITE P1 LIVE: suburb_tier.py (87+142 AU suburbs) + sales_angle.py rule-based 11 templates ($0, Claude Haiku atmestas) + export_gold_leads.py --strict + P0 fix'ai (CLOSED -10000 hard exclude, Wix CMS footer guard, scoring_v2 self-test 4→9 cases). 498/498 leads turi angle. Top 50 v2 CSV su 0 DEFAULT templates. |
 | 2026-05-26 #9 | ~3h | 8.5/10 | 78% | V2-LITE P0 LIVE: migration framework + 14 DB stulpelių + validators.py (13/13 tests) + website_classifier.py (380 leads, 2.5min, $0) + scoring_v2.py + Top 50 gold leads CSV. Bug mid-stride: channel_score double-count fix. CLOSED_PERMANENTLY edge case + Wix footer false-positive — atvira. |
 | 2026-05-26 #8 | ~5h | 8/10 | 85% | Stage B LIVE 365 svetainių (61% hit, 0 errors). export_outreach.py + 4 CSV exports. V2-LITE strategy sprendimas. P0 atidėtas sesijai #9. |
 | 2026-05-26 #7 | ~5h | 9/10 | 80% | Waterfall architecture + Stage A LIVE (1100 leads, 45% hit, $0 real cost). 365 ready Stage B. Solution architect + agent reality checks šaltinių kombinacija. Production-ready Stage A. |
