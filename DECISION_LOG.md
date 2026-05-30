@@ -524,7 +524,7 @@ Po setup'o — sesija #7 antra dalis: `py -3 -m src.enrichment.enrich_places --l
 - 97k×200ms = 3.4h pilnam run'ui. Ne real-time, bet vienkartinis batch job — acceptable. Galima parallelinti iki 10 (`ABR_CONCURRENCY=10`) jei ToS leis.
 - ABR Lookup neturi `created_at`/`updated_at` field'ų BusinessName'ams — neaišku, kurie yra "naujausi" ar "aktyviausi". Imam pirmą iš sąrašo, kuris atitinka heuristiką. Operator'as gali rankiniu cross-check'inti per dashboard'ą.
 
-**Brave key leak fix:** sesijos #6 pradžioje aptikta, kad `.env.example` turi realų `BRAVE_API_KEY=BSAh5c6r_...` value (committed į public GitHub repo). Pakeista į `BRAVE_API_KEY=your_key_here`. Vartotojas rankiniu revoke'ins compromised key per Brave dashboard ir generuos naują, kurį įdės į `.env` (gitignored).
+**Brave key leak fix:** sesijos #6 pradžioje aptikta, kad `.env.example` turi realų `BRAVE_API_KEY=BSAh5c…REDACTED...` value (committed į public GitHub repo). Pakeista į `BRAVE_API_KEY=your_key_here`. Vartotojas rankiniu revoke'ins compromised key per Brave dashboard ir generuos naują, kurį įdės į `.env` (gitignored).
 
 ---
 

@@ -427,7 +427,7 @@ Vartotojas pateikė detalų pasisakymą apie pipeline limit'us su 7 kritikomis (
   - `abr_lookup_api.md` — JSONP endpoint specs (dabar SUPERSEDED)
 
 **Brave key leak fix:**
-- Aptikta sesijos #6 start: `.env.example` faile committed realus `BRAVE_API_KEY=BSAh5c6r_...` value. Vartotojas paskelbė: prenumerata atšaukta, key dead. `.env.example` pakeistas į `BRAVE_API_KEY=your_key_here`. Senas key vis dar git history, bet useless.
+- Aptikta sesijos #6 start: `.env.example` faile committed realus `BRAVE_API_KEY=BSAh5c…REDACTED...` value. Vartotojas paskelbė: prenumerata atšaukta, key dead. `.env.example` pakeistas į `BRAVE_API_KEY=your_key_here`. Senas key vis dar git history, bet useless.
 
 **Plan A — enrich_abr.py (SUPERSEDED tos pačios sesijos antroje pusėje):**
 - enrich_abr.py sukurtas + push'inta (commit f2a8145), tada ištrintas Plan B pivot metu
@@ -447,7 +447,7 @@ Vartotojas pateikė detalų pasisakymą apie pipeline limit'us su 7 kritikomis (
   - `abr_lookup_api.md` — JSONP endpoint specs + GUID auth + response shape
 
 **Brave key leak fix:**
-- Aptikta sesijos #6 start: `.env.example` faile committed realus `BRAVE_API_KEY=BSAh5c6r_...` value (public GitHub repo). Pakeista į `BRAVE_API_KEY=your_key_here`. Vartotojas TURI revoke'inti compromised key per Brave dashboard ir generuoti naują (žr. carry-over).
+- Aptikta sesijos #6 start: `.env.example` faile committed realus `BRAVE_API_KEY=BSAh5c…REDACTED...` value (public GitHub repo). Pakeista į `BRAVE_API_KEY=your_key_here`. Vartotojas TURI revoke'inti compromised key per Brave dashboard ir generuoti naują (žr. carry-over).
 
 **Plan A — enrich_abr.py:**
 - Research: ABR Lookup endpoint `https://abr.business.gov.au/json/AbnDetails.aspx` (JSONP, params: `abn`, `guid`, `callback`). Registration: https://abr.business.gov.au/Tools/WebServicesAgreement. WebFetch patvirtino live endpoint (`Message: "The GUID entered is not recognised as a Registered Party"` su test GUID).
