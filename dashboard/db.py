@@ -13,10 +13,17 @@ Reimport is idempotent: existing `outreach` rows are preserved on UPSERT.
 """
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
+
+from dotenv import load_dotenv
+
+# Įkraunam .env, kad OUTREACH_DB_PATH būtų prieinamas (dashboard paleidžiamas
+# atskirai nuo pipeline, todėl reikia load'inti čia).
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 DB_FILENAME = "outreach.db"
 
@@ -179,7 +186,15 @@ def init_schema(conn: sqlite3.Connection) -> None:
 
 
 def default_db_path() -> Path:
-    """outreach.db sits next to this module (dashboard/outreach.db)."""
+    """Grąžina outreach.db kelią.
+
+    Pirmenybė env var OUTREACH_DB_PATH (pvz. OneDrive lokacija, kur laikomi
+    realūs duomenys). Jei nenustatyta — fallback į dashboard/outreach.db
+    šalia šio modulio.
+    """
+    env = os.getenv("OUTREACH_DB_PATH", "").strip()
+    if env:
+        return Path(env)
     return Path(__file__).resolve().parent / DB_FILENAME
 
 
